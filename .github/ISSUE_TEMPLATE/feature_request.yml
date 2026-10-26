@@ -1,0 +1,15 @@
+name: Feature request
+description: Describe a workflow Zonal could improve.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe a concrete workflow and your current workaround.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and alternatives
+      description: Explain the smallest useful change and any existing feature that comes close.

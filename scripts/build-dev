@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -euo pipefail
+zonal_repo_root="${0:A:h:h}"
+zonal_output="${1:-${TMPDIR:-/tmp}/zonal-development}"
+xcodebuild -project "$zonal_repo_root/Zonal.xcodeproj" -scheme Zonal \
+  -configuration Debug -derivedDataPath "$zonal_output" build
+print "Development app (not launched): $zonal_output/Build/Products/Debug/Zonal.app"
+print "Quit the installed Zonal before running this copy. Development data is isolated."

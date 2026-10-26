@@ -1,0 +1,4 @@
+#!/bin/zsh
+set -euo pipefail
+# Upload only to a draft; never push source, create tags, rebuild, or publish publicly.
+exec python3 "${0:A:h:h:h}/scripts/release.py" upload "$@"

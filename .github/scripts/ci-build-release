@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+# Only used on an ephemeral GitHub-hosted runner, never on a developer's login keychain.
+[[ "${GITHUB_ACTIONS:-}" == true ]] || { echo 'CI runner required' >&2; exit 1; }
+: "${ZONAL_CERTIFICATE_BASE64:?}" "${ZONAL_CERTIFICATE_PASSWORD:?}"
+: "${ZONAL_NOTARY_KEY_BASE64:?}" "${ZONAL_NOTARY_KEY_ID:?}" "${ZONAL_NOTARY_ISSUER:?}"
+: "${ZONAL_SIGN_IDENTITY:?}" "${ZONAL_TEAM_ID:?}"
+zonal_secrets="$(mktemp -d "$RUNNER_TEMP/zonal-signing.XXXXXX")"
+zonal_keychain="$zonal_secrets/release.keychain-db"
+zonal_password="$(openssl rand -hex 32)"
+cleanup() {
+  security delete-keychain "$zonal_keychain" >/dev/null 2>&1 || true
+  rm -rf "$zonal_secrets"
+}
+trap cleanup EXIT
+printf '%s' "$ZONAL_CERTIFICATE_BASE64" | base64 --decode > "$zonal_secrets/certificate.p12"
+printf '%s' "$ZONAL_NOTARY_KEY_BASE64" | base64 --decode > "$zonal_secrets/AuthKey.p8"
+chmod 600 "$zonal_secrets/"*
+security create-keychain -p "$zonal_password" "$zonal_keychain"
+security set-keychain-settings -lut 7200 "$zonal_keychain"
+security unlock-keychain -p "$zonal_password" "$zonal_keychain"
+security import "$zonal_secrets/certificate.p12" -P "$ZONAL_CERTIFICATE_PASSWORD" \
+  -k "$zonal_keychain" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$zonal_password" "$zonal_keychain" >/dev/null
+security list-keychains -d user -s "$zonal_keychain" "$HOME/Library/Keychains/login.keychain-db"
+xcrun notarytool store-credentials zonal-release --key "$zonal_secrets/AuthKey.p8" \
+  --key-id "$ZONAL_NOTARY_KEY_ID" --issuer "$ZONAL_NOTARY_ISSUER" --keychain "$zonal_keychain"
+export ZONAL_NOTARY_KEYCHAIN="$zonal_keychain"
+./scripts/build-release "$@"

@@ -1,0 +1,101 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+zonal_binary="${1:-/Applications/Zonal.app/Contents/MacOS/Zonal}"
+sample_count="${ZONAL_LIVE_SAMPLES:-5}"
+sample_interval="${ZONAL_LIVE_INTERVAL:-0.4}"
+
+if [[ ! -x "$zonal_binary" ]]; then
+  print -u2 "Zonal executable not found: $zonal_binary"
+  exit 2
+fi
+
+python3 - "$zonal_binary" "$sample_count" "$sample_interval" <<'PY'
+import json
+import math
+import subprocess
+import sys
+import time
+
+binary, count_text, interval_text = sys.argv[1:]
+count = max(2, int(count_text))
+interval = max(0.05, float(interval_text))
+previous = {}
+warnings = []
+
+def frame_distance(left, right):
+    return max(abs(a - b) for a, b in zip(left, right))
+
+for sample_index in range(count):
+    output = subprocess.check_output(
+        [binary, "--automation", "debug-state"],
+        text=True,
+        timeout=5,
+    )
+    response = json.loads(output)
+    if not response.get("ok"):
+        raise RuntimeError(response.get("message", "debug-state failed"))
+    state = response.get("result", {}).get("debugState")
+    if not state:
+        raise RuntimeError("debug-state response did not include state")
+
+    windows = state.get("windows", [])
+    ids = [window["id"] for window in windows]
+    if len(ids) != len(set(ids)):
+        raise RuntimeError(f"duplicate live window identity in sample {sample_index + 1}")
+
+    assignments = [
+        window["assignmentID"]
+        for window in windows
+        if window.get("assignmentID") is not None
+    ]
+    if len(assignments) != len(set(assignments)):
+        raise RuntimeError(f"one assignment matched multiple live windows in sample {sample_index + 1}")
+
+    current = {}
+    for window in windows:
+        observed = window.get("observedFrame")
+        desired = window.get("desiredFrame")
+        for label, frame in (("observed", observed), ("desired", desired)):
+            if frame is not None and (
+                len(frame) != 4
+                or not all(math.isfinite(value) for value in frame)
+                or frame[2] <= 0
+                or frame[3] <= 0
+            ):
+                raise RuntimeError(f"invalid {label} frame for {window['id']}")
+
+        exempt = (
+            not window.get("isManaged", True)
+            or window.get("isFullScreen", False)
+            or window.get("isMinimized", False)
+            or window.get("isPlacementPending", False)
+        )
+        if observed and desired and not exempt and frame_distance(observed, desired) > 3:
+            warnings.append(
+                f"sample {sample_index + 1}: {window['bundleIdentifier']} differs from desired frame"
+            )
+
+        current[window["id"]] = (observed, desired, exempt)
+        if window["id"] in previous:
+            old_observed, old_desired, old_exempt = previous[window["id"]]
+            if (
+                observed
+                and old_observed
+                and desired == old_desired
+                and not exempt
+                and not old_exempt
+                and frame_distance(observed, old_observed) > 3
+            ):
+                raise RuntimeError(
+                    f"unexplained frame drift for {window['bundleIdentifier']} between samples"
+                )
+    previous = current
+    if sample_index + 1 < count:
+        time.sleep(interval)
+
+print(f"Live-state invariants passed across {count} samples.")
+for warning in sorted(set(warnings)):
+    print(f"warning: {warning}")
+PY

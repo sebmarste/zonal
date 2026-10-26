@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Zonal app icon</title>
+  <defs>
+    <linearGradient id="background" x1="128" y1="70" x2="884" y2="970" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#183674"/>
+      <stop offset="0.46" stop-color="#081B49"/>
+      <stop offset="1" stop-color="#020817"/>
+    </linearGradient>
+    <radialGradient id="backgroundGlare" cx="0" cy="0" r="1" gradientTransform="translate(286 166) rotate(47) scale(620 520)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3F74D8" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#3F74D8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="markFill" x1="168" y1="92" x2="820" y2="925" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A8DFFF" stop-opacity="0.58"/>
+      <stop offset="0.34" stop-color="#53D8FF" stop-opacity="0.50"/>
+      <stop offset="0.72" stop-color="#188EEB" stop-opacity="0.43"/>
+      <stop offset="1" stop-color="#285FE0" stop-opacity="0.38"/>
+    </linearGradient>
+    <linearGradient id="markGlare" x1="512" y1="82" x2="512" y2="680" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.62"/>
+      <stop offset="0.25" stop-color="white" stop-opacity="0.18"/>
+      <stop offset="0.62" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="210" y1="92" x2="780" y2="942" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E2F7FF" stop-opacity="0.78"/>
+      <stop offset="0.55" stop-color="#8ADFFF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#154BA8" stop-opacity="0.55"/>
+    </linearGradient>
+    <filter id="tileShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="24" stdDeviation="25" flood-color="#000513" flood-opacity="0.68"/>
+    </filter>
+    <filter id="markShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="20" stdDeviation="18" flood-color="#000A2A" flood-opacity="0.72"/>
+    </filter>
+  </defs>
+
+  <rect x="28" y="28" width="968" height="968" rx="224" fill="url(#background)" filter="url(#tileShadow)"/>
+  <rect x="28" y="28" width="968" height="968" rx="224" fill="url(#backgroundGlare)"/>
+  <rect x="35" y="35" width="954" height="954" rx="217" stroke="#6EA8FF" stroke-opacity="0.20" stroke-width="6"/>
+
+  <g transform="translate(112.64 130.64) scale(0.78)" fill="#0755AE" opacity="0.28">
+__ZONAL_MARK__
+  </g>
+  <g transform="translate(112.64 112.64) scale(0.78)" fill="url(#markFill)" stroke="url(#edge)" stroke-width="10" stroke-linejoin="round" filter="url(#markShadow)">
+__ZONAL_MARK__
+  </g>
+  <g transform="translate(112.64 112.64) scale(0.78)" fill="url(#markGlare)" opacity="0.38">
+__ZONAL_MARK__
+  </g>
+</svg>

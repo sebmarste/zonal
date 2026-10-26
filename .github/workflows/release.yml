@@ -1,0 +1,89 @@
+name: Prepare beta
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing approved tag matching Info.plist (e.g. v0.5.0)
+        required: true
+        type: string
+      artifact_run_id:
+        description: Retry upload only using this previous run's verified candidate (empty to build)
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: inputs.artifact_run_id == ''
+    runs-on: xcode-27
+    environment: release-signing
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build, sign and notarize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ZONAL_SIGN_IDENTITY: ${{ vars.ZONAL_SIGN_IDENTITY }}
+          ZONAL_TEAM_ID: ${{ vars.ZONAL_TEAM_ID }}
+          ZONAL_CERTIFICATE_BASE64: ${{ secrets.ZONAL_CERTIFICATE_BASE64 }}
+          ZONAL_CERTIFICATE_PASSWORD: ${{ secrets.ZONAL_CERTIFICATE_PASSWORD }}
+          ZONAL_NOTARY_KEY_BASE64: ${{ secrets.ZONAL_NOTARY_KEY_BASE64 }}
+          ZONAL_NOTARY_KEY_ID: ${{ secrets.ZONAL_NOTARY_KEY_ID }}
+          ZONAL_NOTARY_ISSUER: ${{ secrets.ZONAL_NOTARY_ISSUER }}
+        run: ./.github/scripts/ci-build-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG"
+      - name: Preserve candidate before upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-${{ inputs.tag }}
+          path: |
+            ${{ runner.temp }}/candidate/*.dmg
+            ${{ runner.temp }}/candidate/*.zip
+            ${{ runner.temp }}/candidate/*.json
+            ${{ runner.temp }}/candidate/*.md
+            ${{ runner.temp }}/candidate/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+      - name: Preserve failed-build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: failed-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate/evidence
+          if-no-files-found: ignore
+          retention-days: 14
+  retain:
+    needs: build
+    if: always() && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.artifact_run_id != ''))
+    runs-on: xcode-27
+    environment: release-publishing
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-${{ inputs.tag }}
+          path: ${{ runner.temp }}/candidate
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Retain verified bytes in a draft GitHub beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh auth setup-git
+          ./.github/scripts/publish-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG"

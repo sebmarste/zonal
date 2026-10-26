@@ -1,0 +1,27 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+repo_root="${0:A:h:h}"
+derived_data="${TMPDIR:-/tmp}/zonal-check-derived-data"
+
+cd "$repo_root"
+
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+echo "Xcode"
+xcodebuild -version
+
+echo "Property list"
+plutil -lint Zonal/Info.plist
+
+echo "Tests"
+xcodebuild \
+  -project Zonal.xcodeproj \
+  -scheme Zonal \
+  -destination 'platform=macOS' \
+  -derivedDataPath "$derived_data" \
+  test
+
+echo "Diff hygiene"
+git diff --check

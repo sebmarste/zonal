@@ -1,0 +1,34 @@
+name: Bug report
+description: Report unexpected Zonal behavior.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You can start in Zonal → Settings → Troubleshooting → Create Bug Report.
+        Review any diagnostics before sharing. Report security issues privately to zonal@sebmarste.de.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Explain what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include affected apps, window presentation, and whether sleep, fullscreen or display changes were involved.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Zonal version, macOS version and Mac architecture
+      placeholder: Version/build, macOS version, Apple silicon or Intel
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Optional reviewed diagnostics or screenshots
+      description: Remove window titles, document paths, personal data and secrets. Do not attach your entire Zonal data folder.

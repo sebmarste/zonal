@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Read-only settled-process CPU/RSS budget check; no restart or window actions."""
+import argparse
+import json
+import subprocess
+import time
+
+
+def cpu_seconds(value):
+    days, separator, clock = value.partition("-")
+    parts = (clock if separator else days).split(":")
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + float(part)
+    return seconds + (int(days) * 86400 if separator else 0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pid", type=int)
+    parser.add_argument("--seconds", type=float, default=30)
+    parser.add_argument("--max-cpu", type=float, default=5)
+    parser.add_argument("--max-growth-mib", type=float, default=32)
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        assert cpu_seconds("00:01.50") == 1.5
+        assert cpu_seconds("1224:46.00") == 73486
+        assert cpu_seconds("01:02:03.25") == 3723.25
+        assert cpu_seconds("2-01:02:03") == 176523
+        print("Resource probe self-test passed.")
+        return
+    if not 1 <= args.seconds <= 60:
+        parser.error("--seconds must be between 1 and 60")
+    pid = args.pid
+    if pid is None:
+        pids = subprocess.check_output(["pgrep", "-x", "Zonal"], text=True).split()
+        if len(pids) != 1:
+            parser.error("Expected exactly one Zonal process; pass --pid explicitly")
+        pid = int(pids[0])
+
+    def read():
+        output = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "time=,rss=,lstart="], text=True
+        ).split(maxsplit=2)
+        if len(output) != 3:
+            raise RuntimeError("Process exited during the resource check")
+        return cpu_seconds(output[0]), int(output[1]) / 1024, output[2].strip()
+
+    before = read()
+    started = time.monotonic()
+    time.sleep(args.seconds)
+    after = read()
+    elapsed = time.monotonic() - started
+    if before[2] != after[2] or after[0] < before[0]:
+        raise RuntimeError("Process changed during the resource check")
+    cpu = 100 * (after[0] - before[0]) / elapsed
+    growth = after[1] - before[1]
+    passed = cpu <= args.max_cpu and growth <= args.max_growth_mib
+    print(json.dumps(dict(pid=pid, elapsed_seconds=round(elapsed, 2),
+                         cpu_percent_one_core=round(cpu, 2),
+                         resident_mib=round(after[1], 2),
+                         resident_growth_mib=round(growth, 2),
+                         max_cpu=args.max_cpu, max_growth_mib=args.max_growth_mib,
+                         passed=passed), indent=2))
+    raise SystemExit(0 if passed else 1)
+
+
+if __name__ == "__main__":
+    main()

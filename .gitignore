@@ -1,0 +1,23 @@
+.DS_Store
+default.profraw
+
+.derivedData/
+
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+
+__pycache__/
+
+# Local signing credentials and generated release artifacts
+*.p8
+*.p12
+*.pfx
+*.key
+*.mobileprovision
+.env
+.env.*
+!.env.example
+*.xcarchive/
+*.dSYM/
+*.zip
+*.dmg

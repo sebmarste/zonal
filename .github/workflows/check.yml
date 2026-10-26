@@ -1,0 +1,24 @@
+name: Check
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: ./scripts/check
+      - name: Universal unsigned build
+        run: >-
+          xcodebuild -project Zonal.xcodeproj -scheme Zonal -configuration Release
+          -derivedDataPath "$RUNNER_TEMP/zonal-universal"
+          ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build

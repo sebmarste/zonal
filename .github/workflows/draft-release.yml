@@ -1,0 +1,30 @@
+name: Draft release notes
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing approved version tag (e.g. v0.5.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    environment: release-publishing
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Generate notes for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || exit 1
+          gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "Zonal ${RELEASE_TAG#v} public beta" --generate-notes

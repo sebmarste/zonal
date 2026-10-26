@@ -1,0 +1,598 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7FAA49BDBD0867042A966965 /* WindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7BF1BB9645050DE926886C /* WindowTracker.swift */; };
+		FFD3FF49EAB0559DDD82A8B0 /* SupportReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9203E749717EA35DE8CC3CF9 /* SupportReport.swift */; };
+		FA5AA726C856605356CE1ED6 /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */; };
+		A02F39A0AA463948397D4C27 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 816CD407C3286E3D337144ED /* SettingsWindowController.swift */; };
+		73623D51A4B31B900CE51760 /* SettingsSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C9E343035F9CF509070584F /* SettingsSystem.swift */; };
+		6AC80BDD34CA6B559CEBAF02 /* SettingsShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D07E8ECB37ACBC97DB8A297 /* SettingsShortcuts.swift */; };
+		FED8A3D3482C9A0240207E75 /* SettingsProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E22093DEBCF6EAA288B0ED1 /* SettingsProfiles.swift */; };
+		95412E49A4C8A801770FDCDF /* SettingsLayoutEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B07897C4508750F6F5E815B9 /* SettingsLayoutEditor.swift */; };
+		D0F531FE6DE5791382B43EFC /* SettingsGeneral.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6BAE5FEE31725D06A3114A0 /* SettingsGeneral.swift */; };
+		2551BA254127B73B46F2A146 /* SettingsEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = D988C68E57477F32720808B3 /* SettingsEditing.swift */; };
+		E2AC557DC97032584F7236FC /* SettingsDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2EED93A3067E38ABA64A3D3 /* SettingsDiagnostics.swift */; };
+		022BF90F300E5941CC3EA446 /* SettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61CD73D553F19997B7428790 /* SettingsComponents.swift */; };
+		2EEDE3F82AEBD064235C3BAF /* AppContainerAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF403CD14CC44B51A685B0A /* AppContainerAutomation.swift */; };
+		2CDDEBB17671F9DA187C8C11 /* AppContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 632597CF5906D1FA68403368 /* AppContainer.swift */; };
+		A00100000000000000000001 /* ZonalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000001 /* ZonalApp.swift */; };
+		A00100000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000002 /* Models.swift */; };
+		A00100000000000000000003 /* DefaultProfiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000003 /* DefaultProfiles.swift */; };
+		A00100000000000000000004 /* LayoutEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000004 /* LayoutEngine.swift */; };
+		A00100000000000000000005 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000005 /* ProfileManager.swift */; };
+		A00100000000000000000006 /* PersistenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000006 /* PersistenceStore.swift */; };
+		A00100000000000000000008 /* PermissionsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000008 /* PermissionsController.swift */; };
+		A00100000000000000000010 /* WindowRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000010 /* WindowRegistry.swift */; };
+		A00100000000000000000011 /* WindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000011 /* WindowController.swift */; };
+		A00100000000000000000012 /* RestoreEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000012 /* RestoreEngine.swift */; };
+		A00100000000000000000013 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000013 /* HotkeyManager.swift */; };
+		A00100000000000000000017 /* WorkspaceStateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000020 /* WorkspaceStateService.swift */; };
+		A00100000000000000000018 /* SwitcherController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000021 /* SwitcherController.swift */; };
+		A00100000000000000000019 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000022 /* SettingsView.swift */; };
+		A00100000000000000000020 /* HotZoneOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000023 /* HotZoneOverlayController.swift */; };
+		A00100000000000000000021 /* WindowMovementObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000024 /* WindowMovementObserver.swift */; };
+		A00100000000000000000022 /* ZoneIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000025 /* ZoneIconView.swift */; };
+		A00100000000000000000023 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000026 /* Assets.xcassets */; };
+		A00100000000000000000024 /* WorkspacePolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000027 /* WorkspacePolicies.swift */; };
+		A00100000000000000000025 /* LocalAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000028 /* LocalAutomation.swift */; };
+		A00100000000000000000026 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000029 /* SetupAssistantView.swift */; };
+		A00100000000000000000027 /* WindowInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000030 /* WindowInspectorView.swift */; };
+		A00100000000000000000028 /* ShortcutRecorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000031 /* ShortcutRecorderView.swift */; };
+		A00100000000000000000014 /* LayoutEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000014 /* LayoutEngineTests.swift */; };
+		A00100000000000000000015 /* ConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000015 /* ConfigurationTests.swift */; };
+		A00100000000000000000016 /* PersistenceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00200000000000000000016 /* PersistenceStoreTests.swift */; };
+		B00100000000000000000001 /* ActiveWindowOutlineController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000001 /* ActiveWindowOutlineController.swift */; };
+		B00100000000000000000002 /* ZonalDoctor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000002 /* ZonalDoctor.swift */; };
+		B00100000000000000000003 /* WindowBehaviorSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000003 /* WindowBehaviorSettings.swift */; };
+		B00100000000000000000004 /* WindowActionPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000004 /* WindowActionPolicies.swift */; };
+		B00100000000000000000005 /* WindowReliabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000005 /* WindowReliabilityTests.swift */; };
+		B00100000000000000000006 /* WindowRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000006 /* WindowRuntimeTests.swift */; };
+		B00100000000000000000007 /* WindowTestFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000007 /* WindowTestFixtures.swift */; };
+		B00100000000000000000008 /* WindowInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000008 /* WindowInteractionTests.swift */; };
+		B00100000000000000000009 /* WindowDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000009 /* WindowDiscoveryTests.swift */; };
+		B00100000000000000000010 /* SwitcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000010 /* SwitcherTests.swift */; };
+		B00100000000000000000011 /* WindowRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000011 /* WindowRecoveryTests.swift */; };
+		B00100000000000000000012 /* OverlayCompositingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000012 /* OverlayCompositingTests.swift */; };
+		B00100000000000000000013 /* FloatingFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000013 /* FloatingFeedback.swift */; };
+		B00100000000000000000014 /* OutlineWindowServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000014 /* OutlineWindowServer.swift */; };
+		B00100000000000000000015 /* OutlineWindowServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000015 /* OutlineWindowServerTests.swift */; };
+		B00100000000000000000016 /* ZoneTabController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000016 /* ZoneTabController.swift */; };
+		B00100000000000000000017 /* ZoneTabTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000017 /* ZoneTabTests.swift */; };
+		B00100000000000000000018 /* ZoneTabShelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000018 /* ZoneTabShelf.swift */; };
+		B00100000000000000000019 /* ZoneTabFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000019 /* ZoneTabFrame.swift */; };
+		B00100000000000000000020 /* ZoneTabShelfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000020 /* ZoneTabShelfTests.swift */; };
+		B00100000000000000000021 /* ZoneTabFrameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000021 /* ZoneTabFrameTests.swift */; };
+		B00100000000000000000022 /* ZoneTabPrototypeRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00200000000000000000022 /* ZoneTabPrototypeRenderingTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00300000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00400000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00500000000000000000001;
+			remoteInfo = Zonal;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		3E7BF1BB9645050DE926886C /* WindowTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTracker.swift; sourceTree = "<group>"; };
+		9203E749717EA35DE8CC3CF9 /* SupportReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportReport.swift; sourceTree = "<group>"; };
+		20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
+		816CD407C3286E3D337144ED /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
+		6C9E343035F9CF509070584F /* SettingsSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSystem.swift; sourceTree = "<group>"; };
+		1D07E8ECB37ACBC97DB8A297 /* SettingsShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsShortcuts.swift; sourceTree = "<group>"; };
+		5E22093DEBCF6EAA288B0ED1 /* SettingsProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsProfiles.swift; sourceTree = "<group>"; };
+		B07897C4508750F6F5E815B9 /* SettingsLayoutEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsLayoutEditor.swift; sourceTree = "<group>"; };
+		D6BAE5FEE31725D06A3114A0 /* SettingsGeneral.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsGeneral.swift; sourceTree = "<group>"; };
+		D988C68E57477F32720808B3 /* SettingsEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsEditing.swift; sourceTree = "<group>"; };
+		B2EED93A3067E38ABA64A3D3 /* SettingsDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDiagnostics.swift; sourceTree = "<group>"; };
+		61CD73D553F19997B7428790 /* SettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsComponents.swift; sourceTree = "<group>"; };
+		FCF403CD14CC44B51A685B0A /* AppContainerAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainerAutomation.swift; sourceTree = "<group>"; };
+		632597CF5906D1FA68403368 /* AppContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppContainer.swift; sourceTree = "<group>"; };
+		A00200000000000000000001 /* ZonalApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZonalApp.swift; sourceTree = "<group>"; };
+		A00200000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A00200000000000000000003 /* DefaultProfiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultProfiles.swift; sourceTree = "<group>"; };
+		A00200000000000000000004 /* LayoutEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEngine.swift; sourceTree = "<group>"; };
+		A00200000000000000000005 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = "<group>"; };
+		A00200000000000000000006 /* PersistenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceStore.swift; sourceTree = "<group>"; };
+		A00200000000000000000008 /* PermissionsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsController.swift; sourceTree = "<group>"; };
+		A00200000000000000000010 /* WindowRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRegistry.swift; sourceTree = "<group>"; };
+		A00200000000000000000011 /* WindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowController.swift; sourceTree = "<group>"; };
+		A00200000000000000000012 /* RestoreEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreEngine.swift; sourceTree = "<group>"; };
+		A00200000000000000000013 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		A00200000000000000000020 /* WorkspaceStateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStateService.swift; sourceTree = "<group>"; };
+		A00200000000000000000021 /* SwitcherController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitcherController.swift; sourceTree = "<group>"; };
+		A00200000000000000000022 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A00200000000000000000023 /* HotZoneOverlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotZoneOverlayController.swift; sourceTree = "<group>"; };
+		A00200000000000000000024 /* WindowMovementObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowMovementObserver.swift; sourceTree = "<group>"; };
+		A00200000000000000000025 /* ZoneIconView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneIconView.swift; sourceTree = "<group>"; };
+		A00200000000000000000026 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A00200000000000000000027 /* WorkspacePolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePolicies.swift; sourceTree = "<group>"; };
+		A00200000000000000000028 /* LocalAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAutomation.swift; sourceTree = "<group>"; };
+		A00200000000000000000029 /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantView.swift; sourceTree = "<group>"; };
+		A00200000000000000000030 /* WindowInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInspectorView.swift; sourceTree = "<group>"; };
+		A00200000000000000000031 /* ShortcutRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecorderView.swift; sourceTree = "<group>"; };
+		A00200000000000000000014 /* LayoutEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutEngineTests.swift; sourceTree = "<group>"; };
+		A00200000000000000000015 /* ConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationTests.swift; sourceTree = "<group>"; };
+		A00200000000000000000016 /* PersistenceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceStoreTests.swift; sourceTree = "<group>"; };
+		A00200000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A00200000000000000000018 /* Zonal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zonal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00200000000000000000019 /* ZonalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZonalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00200000000000000000001 /* ActiveWindowOutlineController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveWindowOutlineController.swift; sourceTree = "<group>"; };
+		B00200000000000000000002 /* ZonalDoctor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZonalDoctor.swift; sourceTree = "<group>"; };
+		B00200000000000000000003 /* WindowBehaviorSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowBehaviorSettings.swift; sourceTree = "<group>"; };
+		B00200000000000000000004 /* WindowActionPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowActionPolicies.swift; sourceTree = "<group>"; };
+		B00200000000000000000005 /* WindowReliabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowReliabilityTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000006 /* WindowRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRuntimeTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000007 /* WindowTestFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTestFixtures.swift; sourceTree = "<group>"; };
+		B00200000000000000000008 /* WindowInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInteractionTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000009 /* WindowDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDiscoveryTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000010 /* SwitcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitcherTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000011 /* WindowRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowRecoveryTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000012 /* OverlayCompositingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayCompositingTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000013 /* FloatingFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingFeedback.swift; sourceTree = "<group>"; };
+		B00200000000000000000014 /* OutlineWindowServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineWindowServer.swift; sourceTree = "<group>"; };
+		B00200000000000000000015 /* OutlineWindowServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlineWindowServerTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000016 /* ZoneTabController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabController.swift; sourceTree = "<group>"; };
+		B00200000000000000000017 /* ZoneTabTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000018 /* ZoneTabShelf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabShelf.swift; sourceTree = "<group>"; };
+		B00200000000000000000019 /* ZoneTabFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabFrame.swift; sourceTree = "<group>"; };
+		B00200000000000000000020 /* ZoneTabShelfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabShelfTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000021 /* ZoneTabFrameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabFrameTests.swift; sourceTree = "<group>"; };
+		B00200000000000000000022 /* ZoneTabPrototypeRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoneTabPrototypeRenderingTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00600000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00600000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00700000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A00700000000000000000002 /* Zonal */,
+				A00700000000000000000003 /* ZonalTests */,
+				A00700000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00700000000000000000002 /* Zonal */ = {
+			isa = PBXGroup;
+			children = (
+				A00200000000000000000017 /* Info.plist */,
+				A00200000000000000000026 /* Assets.xcassets */,
+				632597CF5906D1FA68403368 /* AppContainer.swift */,
+				FCF403CD14CC44B51A685B0A /* AppContainerAutomation.swift */,
+				61CD73D553F19997B7428790 /* SettingsComponents.swift */,
+				B2EED93A3067E38ABA64A3D3 /* SettingsDiagnostics.swift */,
+				D988C68E57477F32720808B3 /* SettingsEditing.swift */,
+				D6BAE5FEE31725D06A3114A0 /* SettingsGeneral.swift */,
+				B07897C4508750F6F5E815B9 /* SettingsLayoutEditor.swift */,
+				5E22093DEBCF6EAA288B0ED1 /* SettingsProfiles.swift */,
+				1D07E8ECB37ACBC97DB8A297 /* SettingsShortcuts.swift */,
+				6C9E343035F9CF509070584F /* SettingsSystem.swift */,
+				816CD407C3286E3D337144ED /* SettingsWindowController.swift */,
+				20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */,
+				9203E749717EA35DE8CC3CF9 /* SupportReport.swift */,
+				3E7BF1BB9645050DE926886C /* WindowTracker.swift */,
+				A00200000000000000000001 /* ZonalApp.swift */,
+				A00200000000000000000002 /* Models.swift */,
+				A00200000000000000000003 /* DefaultProfiles.swift */,
+				A00200000000000000000004 /* LayoutEngine.swift */,
+				A00200000000000000000005 /* ProfileManager.swift */,
+				A00200000000000000000006 /* PersistenceStore.swift */,
+				A00200000000000000000008 /* PermissionsController.swift */,
+				A00200000000000000000010 /* WindowRegistry.swift */,
+				B00200000000000000000001 /* ActiveWindowOutlineController.swift */,
+				B00200000000000000000014 /* OutlineWindowServer.swift */,
+				B00200000000000000000016 /* ZoneTabController.swift */,
+				B00200000000000000000019 /* ZoneTabFrame.swift */,
+				B00200000000000000000018 /* ZoneTabShelf.swift */,
+				B00200000000000000000002 /* ZonalDoctor.swift */,
+				B00200000000000000000003 /* WindowBehaviorSettings.swift */,
+				B00200000000000000000004 /* WindowActionPolicies.swift */,
+				B00200000000000000000013 /* FloatingFeedback.swift */,
+				A00200000000000000000011 /* WindowController.swift */,
+				A00200000000000000000012 /* RestoreEngine.swift */,
+				A00200000000000000000013 /* HotkeyManager.swift */,
+				A00200000000000000000020 /* WorkspaceStateService.swift */,
+				A00200000000000000000021 /* SwitcherController.swift */,
+				A00200000000000000000022 /* SettingsView.swift */,
+				A00200000000000000000023 /* HotZoneOverlayController.swift */,
+				A00200000000000000000025 /* ZoneIconView.swift */,
+				A00200000000000000000024 /* WindowMovementObserver.swift */,
+				A00200000000000000000027 /* WorkspacePolicies.swift */,
+				A00200000000000000000028 /* LocalAutomation.swift */,
+				A00200000000000000000029 /* SetupAssistantView.swift */,
+				A00200000000000000000030 /* WindowInspectorView.swift */,
+				A00200000000000000000031 /* ShortcutRecorderView.swift */,
+			);
+			path = Zonal;
+			sourceTree = "<group>";
+		};
+		A00700000000000000000003 /* ZonalTests */ = {
+			isa = PBXGroup;
+			children = (
+				A00200000000000000000014 /* LayoutEngineTests.swift */,
+				B00200000000000000000005 /* WindowReliabilityTests.swift */,
+				B00200000000000000000006 /* WindowRuntimeTests.swift */,
+				B00200000000000000000015 /* OutlineWindowServerTests.swift */,
+				B00200000000000000000017 /* ZoneTabTests.swift */,
+				B00200000000000000000022 /* ZoneTabPrototypeRenderingTests.swift */,
+				B00200000000000000000021 /* ZoneTabFrameTests.swift */,
+				B00200000000000000000020 /* ZoneTabShelfTests.swift */,
+				B00200000000000000000007 /* WindowTestFixtures.swift */,
+				B00200000000000000000008 /* WindowInteractionTests.swift */,
+				B00200000000000000000009 /* WindowDiscoveryTests.swift */,
+				B00200000000000000000010 /* SwitcherTests.swift */,
+				B00200000000000000000011 /* WindowRecoveryTests.swift */,
+				B00200000000000000000012 /* OverlayCompositingTests.swift */,
+				A00200000000000000000015 /* ConfigurationTests.swift */,
+				A00200000000000000000016 /* PersistenceStoreTests.swift */,
+			);
+			path = ZonalTests;
+			sourceTree = "<group>";
+		};
+		A00700000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00200000000000000000018 /* Zonal.app */,
+				A00200000000000000000019 /* ZonalTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00500000000000000000001 /* Zonal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00800000000000000000001 /* Build configuration list for PBXNativeTarget "Zonal" */;
+			buildPhases = (
+				A00900000000000000000001 /* Sources */,
+				A00600000000000000000001 /* Frameworks */,
+				A01200000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Zonal;
+			productName = Zonal;
+			productReference = A00200000000000000000018 /* Zonal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A00500000000000000000002 /* ZonalTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00800000000000000000002 /* Build configuration list for PBXNativeTarget "ZonalTests" */;
+			buildPhases = (
+				A00900000000000000000002 /* Sources */,
+				A00600000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A01000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = ZonalTests;
+			productName = ZonalTests;
+			productReference = A00200000000000000000019 /* ZonalTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00400000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					A00500000000000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+					A00500000000000000000002 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = A00500000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A00800000000000000000003 /* Build configuration list for PBXProject "Zonal" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A00700000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A00700000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00500000000000000000001 /* Zonal */,
+				A00500000000000000000002 /* ZonalTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A01200000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00100000000000000000023 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00900000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2CDDEBB17671F9DA187C8C11 /* AppContainer.swift in Sources */,
+				2EEDE3F82AEBD064235C3BAF /* AppContainerAutomation.swift in Sources */,
+				022BF90F300E5941CC3EA446 /* SettingsComponents.swift in Sources */,
+				E2AC557DC97032584F7236FC /* SettingsDiagnostics.swift in Sources */,
+				2551BA254127B73B46F2A146 /* SettingsEditing.swift in Sources */,
+				D0F531FE6DE5791382B43EFC /* SettingsGeneral.swift in Sources */,
+				95412E49A4C8A801770FDCDF /* SettingsLayoutEditor.swift in Sources */,
+				FED8A3D3482C9A0240207E75 /* SettingsProfiles.swift in Sources */,
+				6AC80BDD34CA6B559CEBAF02 /* SettingsShortcuts.swift in Sources */,
+				73623D51A4B31B900CE51760 /* SettingsSystem.swift in Sources */,
+				A02F39A0AA463948397D4C27 /* SettingsWindowController.swift in Sources */,
+				FA5AA726C856605356CE1ED6 /* StatusItemController.swift in Sources */,
+				FFD3FF49EAB0559DDD82A8B0 /* SupportReport.swift in Sources */,
+				7FAA49BDBD0867042A966965 /* WindowTracker.swift in Sources */,
+				A00100000000000000000001 /* ZonalApp.swift in Sources */,
+				A00100000000000000000002 /* Models.swift in Sources */,
+				A00100000000000000000003 /* DefaultProfiles.swift in Sources */,
+				A00100000000000000000004 /* LayoutEngine.swift in Sources */,
+				A00100000000000000000005 /* ProfileManager.swift in Sources */,
+				A00100000000000000000006 /* PersistenceStore.swift in Sources */,
+				A00100000000000000000008 /* PermissionsController.swift in Sources */,
+				A00100000000000000000010 /* WindowRegistry.swift in Sources */,
+				B00100000000000000000001 /* ActiveWindowOutlineController.swift in Sources */,
+				B00100000000000000000014 /* OutlineWindowServer.swift in Sources */,
+				B00100000000000000000016 /* ZoneTabController.swift in Sources */,
+				B00100000000000000000019 /* ZoneTabFrame.swift in Sources */,
+				B00100000000000000000018 /* ZoneTabShelf.swift in Sources */,
+				B00100000000000000000002 /* ZonalDoctor.swift in Sources */,
+				B00100000000000000000003 /* WindowBehaviorSettings.swift in Sources */,
+				B00100000000000000000004 /* WindowActionPolicies.swift in Sources */,
+				B00100000000000000000013 /* FloatingFeedback.swift in Sources */,
+				A00100000000000000000011 /* WindowController.swift in Sources */,
+				A00100000000000000000012 /* RestoreEngine.swift in Sources */,
+				A00100000000000000000013 /* HotkeyManager.swift in Sources */,
+				A00100000000000000000017 /* WorkspaceStateService.swift in Sources */,
+				A00100000000000000000018 /* SwitcherController.swift in Sources */,
+				A00100000000000000000019 /* SettingsView.swift in Sources */,
+				A00100000000000000000020 /* HotZoneOverlayController.swift in Sources */,
+				A00100000000000000000021 /* WindowMovementObserver.swift in Sources */,
+				A00100000000000000000022 /* ZoneIconView.swift in Sources */,
+				A00100000000000000000024 /* WorkspacePolicies.swift in Sources */,
+				A00100000000000000000025 /* LocalAutomation.swift in Sources */,
+				A00100000000000000000026 /* SetupAssistantView.swift in Sources */,
+				A00100000000000000000027 /* WindowInspectorView.swift in Sources */,
+				A00100000000000000000028 /* ShortcutRecorderView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00900000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00100000000000000000014 /* LayoutEngineTests.swift in Sources */,
+				B00100000000000000000005 /* WindowReliabilityTests.swift in Sources */,
+				B00100000000000000000006 /* WindowRuntimeTests.swift in Sources */,
+				B00100000000000000000015 /* OutlineWindowServerTests.swift in Sources */,
+				B00100000000000000000017 /* ZoneTabTests.swift in Sources */,
+				B00100000000000000000022 /* ZoneTabPrototypeRenderingTests.swift in Sources */,
+				B00100000000000000000021 /* ZoneTabFrameTests.swift in Sources */,
+				B00100000000000000000020 /* ZoneTabShelfTests.swift in Sources */,
+				B00100000000000000000007 /* WindowTestFixtures.swift in Sources */,
+				B00100000000000000000008 /* WindowInteractionTests.swift in Sources */,
+				B00100000000000000000009 /* WindowDiscoveryTests.swift in Sources */,
+				B00100000000000000000010 /* SwitcherTests.swift in Sources */,
+				B00100000000000000000011 /* WindowRecoveryTests.swift in Sources */,
+				B00100000000000000000012 /* OverlayCompositingTests.swift in Sources */,
+				A00100000000000000000015 /* ConfigurationTests.swift in Sources */,
+				A00100000000000000000016 /* PersistenceStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A01000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00500000000000000000001 /* Zonal */;
+			targetProxy = A00300000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A01100000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = NO;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A01100000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGNING_ALLOWED = NO;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A01100000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGNING_ALLOWED = YES;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Zonal/Info.plist;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sebmarste.zonal.dev;
+				ZONAL_DISPLAY_NAME = "Zonal Development";
+				PRODUCT_NAME = Zonal;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A01100000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGNING_ALLOWED = YES;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Zonal/Info.plist;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sebmarste.zonal;
+				ZONAL_DISPLAY_NAME = Zonal;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				PRODUCT_NAME = Zonal;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A01100000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGNING_ALLOWED = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				INFOPLIST_KEY_CFBundleDisplayName = ZonalTests;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sebmarste.zonal.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Zonal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Zonal";
+			};
+			name = Debug;
+		};
+		A01100000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGNING_ALLOWED = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				INFOPLIST_KEY_CFBundleDisplayName = ZonalTests;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sebmarste.zonal.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Zonal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Zonal";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00800000000000000000001 /* Build configuration list for PBXNativeTarget "Zonal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A01100000000000000000003 /* Debug */,
+				A01100000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00800000000000000000002 /* Build configuration list for PBXNativeTarget "ZonalTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A01100000000000000000005 /* Debug */,
+				A01100000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00800000000000000000003 /* Build configuration list for PBXProject "Zonal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A01100000000000000000001 /* Debug */,
+				A01100000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00400000000000000000001 /* Project object */;
+}

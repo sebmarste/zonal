@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>Zonal toolbar mark</title>
+  <g fill="none" stroke="#000000" stroke-width="44" stroke-linejoin="bevel">
+    <!-- Only the four outside corners retain a subtle radius. -->
+    <path d="M134 90H890Q934 90 934 134V254H90V134Q90 90 134 90Z"/>
+    <path d="M90 770H934V890Q934 934 890 934H134Q90 934 90 890V770Z"/>
+
+    <!-- The middle zones are deliberately angular to preserve the Z at 18 pt. -->
+    <path d="M90 362H570L610 420L90 662Z"/>
+    <path d="M934 362L414 604L454 662H934Z"/>
+  </g>
+</svg>
