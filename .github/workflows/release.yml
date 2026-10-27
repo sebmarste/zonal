@@ -6,6 +6,10 @@ on:
         description: Existing approved tag matching Info.plist (e.g. v0.5.0)
         required: true
         type: string
+      release_notes:
+        description: Exact reviewed draft release notes (required for new builds; omit for upload-only retries)
+        required: false
+        type: string
       artifact_run_id:
         description: Retry upload only using this previous run's verified candidate (empty to build)
         required: false
@@ -29,7 +33,7 @@ jobs:
           persist-credentials: false
       - name: Build, sign and notarize
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
           RELEASE_TAG: ${{ inputs.tag }}
           ZONAL_SIGN_IDENTITY: ${{ vars.ZONAL_SIGN_IDENTITY }}
           ZONAL_TEAM_ID: ${{ vars.ZONAL_TEAM_ID }}
@@ -38,7 +42,12 @@ jobs:
           ZONAL_NOTARY_KEY_BASE64: ${{ secrets.ZONAL_NOTARY_KEY_BASE64 }}
           ZONAL_NOTARY_KEY_ID: ${{ secrets.ZONAL_NOTARY_KEY_ID }}
           ZONAL_NOTARY_ISSUER: ${{ secrets.ZONAL_NOTARY_ISSUER }}
-        run: ./.github/scripts/ci-build-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG"
+        # Draft releases require write access. Pass reviewed notes as data so the
+        # signing job keeps read-only repository permissions.
+        run: |
+          [[ -n "$RELEASE_NOTES" ]] || { echo 'Reviewed release notes are required' >&2; exit 1; }
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/release-notes.md"
+          ./.github/scripts/ci-build-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG" --notes "$RUNNER_TEMP/release-notes.md"
       - name: Preserve candidate before upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
