@@ -1,14 +1,13 @@
 name: Prepare beta
 on:
+  push:
+    branches: [main]
+    paths: [Zonal/Info.plist]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing approved tag matching Info.plist (e.g. v0.5.0)
+        description: Existing tag to retry (e.g. v0.5.2)
         required: true
-        type: string
-      release_notes:
-        description: Exact reviewed draft release notes (required for new builds; omit for upload-only retries)
-        required: false
         type: string
       artifact_run_id:
         description: Retry upload only using this previous run's verified candidate (empty to build)
@@ -17,24 +16,53 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: release-${{ inputs.tag || github.sha }}
   cancel-in-progress: false
 jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release-publishing
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      enabled: ${{ steps.release.outputs.enabled }}
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+      notes: ${{ steps.release.outputs.notes }}
+      artifact_run_id: ${{ steps.release.outputs.artifact_run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare tag and draft notes, or select an upload retry
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEFORE_SHA: ${{ github.event.before }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
+        run: python3 .github/scripts/prepare-release.py
   build:
-    if: inputs.artifact_run_id == ''
+    needs: prepare
+    if: needs.prepare.outputs.enabled == 'true' && needs.prepare.outputs.artifact_run_id == ''
     runs-on: xcode-27
     environment: release-signing
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ needs.prepare.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - name: Build, sign and notarize
         env:
-          RELEASE_NOTES: ${{ inputs.release_notes }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_NOTES: ${{ needs.prepare.outputs.notes }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           ZONAL_SIGN_IDENTITY: ${{ vars.ZONAL_SIGN_IDENTITY }}
           ZONAL_TEAM_ID: ${{ vars.ZONAL_TEAM_ID }}
           ZONAL_CERTIFICATE_BASE64: ${{ secrets.ZONAL_CERTIFICATE_BASE64 }}
@@ -42,16 +70,16 @@ jobs:
           ZONAL_NOTARY_KEY_BASE64: ${{ secrets.ZONAL_NOTARY_KEY_BASE64 }}
           ZONAL_NOTARY_KEY_ID: ${{ secrets.ZONAL_NOTARY_KEY_ID }}
           ZONAL_NOTARY_ISSUER: ${{ secrets.ZONAL_NOTARY_ISSUER }}
-        # Draft releases require write access. Pass reviewed notes as data so the
+        # Draft releases require write access. Pass draft notes as data so the
         # signing job keeps read-only repository permissions.
         run: |
-          [[ -n "$RELEASE_NOTES" ]] || { echo 'Reviewed release notes are required' >&2; exit 1; }
+          [[ -n "$RELEASE_NOTES" ]] || { echo 'Release notes are required' >&2; exit 1; }
           printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/release-notes.md"
           ./.github/scripts/ci-build-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG" --notes "$RUNNER_TEMP/release-notes.md"
       - name: Preserve candidate before upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: candidate-${{ inputs.tag }}
+          name: candidate-${{ needs.prepare.outputs.tag }}
           path: |
             ${{ runner.temp }}/candidate/*.dmg
             ${{ runner.temp }}/candidate/*.zip
@@ -69,8 +97,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
   retain:
-    needs: build
-    if: always() && (needs.build.result == 'success' || (needs.build.result == 'skipped' && inputs.artifact_run_id != ''))
+    needs: [prepare, build]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.enabled == 'true' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.prepare.outputs.artifact_run_id != ''))
     runs-on: xcode-27
     environment: release-publishing
     timeout-minutes: 20
@@ -80,19 +108,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: refs/tags/${{ inputs.tag }}
+          ref: ${{ needs.prepare.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: candidate-${{ inputs.tag }}
+          name: candidate-${{ needs.prepare.outputs.tag }}
           path: ${{ runner.temp }}/candidate
-          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          run-id: ${{ needs.prepare.outputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Retain verified bytes in a draft GitHub beta
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           gh auth setup-git
           ./.github/scripts/publish-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG"

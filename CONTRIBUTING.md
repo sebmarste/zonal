@@ -184,26 +184,37 @@ are not evidence of Intel runtime compatibility; see README for live-tested limi
 
 ## Release process
 
-The **Draft release notes** workflow generates a GitHub draft for an existing tag.
-Pass the exact reviewed draft text in **Prepare beta → release_notes** for a new
-build. Signing uses read-only repository permissions and cannot fetch drafts;
-the upload job checks that the archived notes still match the GitHub draft.
-A maintainer edits and reviews its notes before running **Prepare beta**. That
-workflow uses protected signing/publishing environments, runs checks, builds both
-architectures, signs with Developer ID, notarizes, staples, and verifies the download.
+Merging an increased app version and build number in `Zonal/Info.plist` to protected
+`main` starts **Prepare beta**. Other merges do not create releases. The workflow
+creates an immutable version tag and a draft with generated release notes, runs
+checks, builds both architectures, signs with Developer ID, notarizes, staples,
+and verifies the download. Only the maintainer has repository write access;
+required PR checks protect `main`. Merging a version bump authorizes signing.
+
+The signing and publishing environments accept only workflows running from `main`,
+with no separate deployment approval. PR checks have no signing credentials.
+Signing keeps read-only repository permissions; tag/draft creation and artifact
+upload use separate jobs with write access. Manual retries accept only tags whose
+commits are already in `main`.
+
 The app and its drag-to-Applications DMG are notarized and stapled, so the copied
 app also carries its ticket. DMG layout tooling is installed in a temporary Python
 environment from hash-pinned wheels; normal development needs no extra packages.
-It retains the DMG, reviewed notes, checksums, provenance, archive and matching dSYMs
-in a draft release. Publication is a separate manual action on those exact bytes.
-Notes are frozen with the candidate; upload rejects a draft whose text has changed.
+The workflow retains the DMG, notes, checksums, provenance, archive and matching
+dSYMs in a **draft release**. Inspect the download and review its notes, then
+publish manually on GitHub. Workflow success never publishes publicly.
+
+If a build fails before retaining a candidate, dispatch **Prepare beta** from `main`
+with its existing tag. If a candidate was retained, set `artifact_run_id` to that
+run's ID: the workflow reuses those bytes instead of rebuilding. Existing assets
+must match byte-for-byte. During upload, draft notes must match the archived notes;
+restore them from `release-notes.md` if a retry follows edits to the draft.
 
 GitHub release assets retain shipped artifacts and symbols; Actions artifacts are
 a temporary recovery buffer (90 days for candidates, 14 days for failed-build evidence).
 Shared build/verification logic stays in `scripts/release.py`; GitHub runner setup
 and upload entry points live in `.github/scripts`. Local signing remains supported
-and is the active path until the protected hosted workflow has been verified.
-Account setup, operational runbooks and launch checklists are maintained privately.
+as a fallback. Account setup and operational runbooks are maintained privately.
 
 ## Terminology
 
