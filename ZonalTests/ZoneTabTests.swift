@@ -1059,7 +1059,7 @@ final class ZoneTabTests: XCTestCase {
         let window = managedWindow(cgWindowID: 1, observedOrder: 0)
         let key = OutlineWindowKey(pid: 42, number: 1)
         let controller = ActiveWindowOutlineController(store: store, radiusQuery: { _ in 10 },
-            visibleFramesProvider: { [key: CGRect(x: 100, y: 100, width: 500, height: 400)] })
+            visibleFramesProvider: { [key: CGRect(x: 100, y: 100, width: 500, height: 400)] }, reduceMotion: { false })
         defer { controller.stop() }
         controller.update(window: window)
         let deadline = ContinuousClock.now + .seconds(3)
@@ -1111,7 +1111,7 @@ final class ZoneTabTests: XCTestCase {
             visibleFramesProvider: {
                 [OutlineWindowKey(pid: 42, number: 1): CGRect(x: 100, y: 100, width: 500, height: 400),
                  OutlineWindowKey(pid: 42, number: 2): CGRect(x: 200, y: 100, width: 500, height: 400)]
-            })
+            }, reduceMotion: { false })
         defer { controller.stop() }
         func waitForPulse(_ count: Int) async throws -> ActiveWindowOutlineView {
             let deadline = ContinuousClock.now + .seconds(3)
@@ -1150,7 +1150,7 @@ final class ZoneTabTests: XCTestCase {
         store.saveConfiguration(configuration)
         let window = managedWindow(cgWindowID: 1, observedOrder: 0)
         let controller = ActiveWindowOutlineController(store: store, radiusQuery: { _ in 10 },
-            visibleFramesProvider: { [OutlineWindowKey(pid: 42, number: 1): CGRect(x: 100, y: 100, width: 500, height: 400)] })
+            visibleFramesProvider: { [OutlineWindowKey(pid: 42, number: 1): CGRect(x: 100, y: 100, width: 500, height: 400)] }, reduceMotion: { false })
         defer { controller.stop() }
         controller.update(window: window)
         configuration.behavior.outlinePulseMode = .switcherOnly
