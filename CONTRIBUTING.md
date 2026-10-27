@@ -185,6 +185,9 @@ are not evidence of Intel runtime compatibility; see README for live-tested limi
 ## Release process
 
 The **Draft release notes** workflow generates a GitHub draft for an existing tag.
+Pass the exact reviewed draft text in **Prepare beta → release_notes** for a new
+build. Signing uses read-only repository permissions and cannot fetch drafts;
+the upload job checks that the archived notes still match the GitHub draft.
 A maintainer edits and reviews its notes before running **Prepare beta**. That
 workflow uses protected signing/publishing environments, runs checks, builds both
 architectures, signs with Developer ID, notarizes, staples, and verifies the download.
