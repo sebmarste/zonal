@@ -5,6 +5,26 @@ import XCTest
 @testable import Zonal
 
 final class ConfigurationTests: XCTestCase {
+    func testOverlappingTabModesRoundTripAndDefaultWhenAbsent() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let defaults = ZonalConfiguration.default
+        let data = try encoder.encode(defaults)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["overlappingZoneTabs"])
+        XCTAssertEqual(try decoder.decode(ZonalConfiguration.self, from: data).overlappingZoneTabs ?? .zoneShortcuts,
+                       .zoneShortcuts)
+        for mode in OverlappingZoneTabs.allCases {
+            var configuration = defaults
+            configuration.overlappingZoneTabs = mode
+            XCTAssertEqual(try decoder.decode(ZonalConfiguration.self, from: encoder.encode(configuration)), configuration)
+            XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: defaults, current: configuration))
+        }
+        var invalid = json
+        invalid["overlappingZoneTabs"] = "unknown"
+        XCTAssertThrowsError(try decoder.decode(ZonalConfiguration.self, from: JSONSerialization.data(withJSONObject: invalid)))
+    }
+
     func testTerminologyRenamesPreserveSerializedSettings() throws {
         XCTAssertEqual(try JSONDecoder().decode(ZoneWindowPresentation.self,
             from: Data("\"accordion\"".utf8)), .peekStack)

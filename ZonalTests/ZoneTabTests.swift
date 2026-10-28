@@ -1259,6 +1259,70 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertEqual(ZoneTabVisibilityPolicy().target(for: emptyOwner, visible: visible)?.number, 2)
     }
 
+    func testSharedTabModesUseGlobalHistoryWithoutChangingAssignmentsOrPlacement() throws {
+        let inventory = Inventory()
+        let (store, service, tracker, _, _, original) = try fixture(inventory: inventory)
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var config = store.loadConfiguration()
+        config.profiles[0].zones = [
+            Zone(id: .main, name: "Main", frame: .full, windowPresentation: .tabs),
+            Zone(id: .left, name: "Left", frame: .full),
+            Zone(id: .right, name: "Right", frame: NormalizedFrame(x: 0, y: 0, width: 0.5, height: 1))
+        ]
+        store.saveConfiguration(config)
+        var assignments = original
+        assignments[1].zoneID = .left
+        assignments[2].zoneID = .left
+        assignments[3].zoneID = .right
+        assignments[3].managementMode = .managed
+        store.saveAssignments(assignments)
+        service.reconcile()
+        let ids = assignments.map(\.id)
+        store.saveZoneStackState(ZoneStackState(globalRecency: [ids[3], ids[2], ids[0], ids[1]],
+            activeAssignmentByZone: [.left: ids[2]],
+            assignmentRecencyByZone: [.main: [ids[0]], .left: [ids[2], ids[1]]]))
+        let workspace = try Data(contentsOf: store.workspaceURL)
+        let originalTabs = try XCTUnwrap(service.tabSnapshots().first)
+        for mode in OverlappingZoneTabs.allCases {
+            config.overlappingZoneTabs = mode
+            XCTAssertTrue(store.saveConfiguration(config))
+            let tabs = try XCTUnwrap(service.tabSnapshots().first)
+            XCTAssertEqual(tabs.zoneID, originalTabs.zoneID)
+            XCTAssertEqual(tabs.layout, originalTabs.layout)
+            XCTAssertEqual(tabs.fittedWindowIDs, originalTabs.fittedWindowIDs)
+            XCTAssertEqual(Set(tabs.orderingItems.map(\.assignmentID)), Set(ids.prefix(3)))
+            switch mode {
+            case .currentZoneOnly:
+                XCTAssertEqual(tabs.items.map(\.assignmentID), [ids[2], ids[1]])
+                XCTAssertTrue(tabs.otherZoneItems.isEmpty)
+            case .zoneShortcuts:
+                XCTAssertEqual(tabs.items.map(\.assignmentID), [ids[2], ids[1]])
+                XCTAssertEqual(tabs.otherZoneItems.map(\.assignmentID), [ids[0]])
+            case .allWindows:
+                XCTAssertEqual(tabs.items.map(\.assignmentID), [ids[2], ids[0], ids[1]])
+                XCTAssertEqual(tabs.items.first?.zoneID, .left)
+                XCTAssertTrue(tabs.otherZoneItems.isEmpty)
+            }
+            XCTAssertEqual(try Data(contentsOf: store.workspaceURL), workspace)
+        }
+        for index in [1, 2, 0] {
+            inventory.focusedWindow = inventory.windows[index]
+            _ = tracker.captureFocusedWindow(origin: "merged-tab-test")
+        }
+        let focused = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertEqual(focused.items.map(\.assignmentID), [ids[0], ids[2], ids[1]])
+        XCTAssertEqual(focused.items.first?.zoneID, .main)
+        XCTAssertEqual(focused.items.filter(\.isActive).map(\.assignmentID), [ids[0]])
+
+        // Windows absent from history remain visible; other groups stay excluded.
+        XCTAssertTrue(store.saveZoneStackState(ZoneStackState(globalRecency: [ids[3], ids[2]])))
+        XCTAssertEqual(service.tabSnapshots().first?.items.map(\.assignmentID), [ids[0], ids[2], ids[1]])
+        inventory.windows[1].isMinimized = true
+        inventory.windows[2].isFullScreen = true
+        tracker.reconcile()
+        XCTAssertEqual(service.tabSnapshots().first?.items.map(\.assignmentID), [ids[0]])
+    }
+
     func testTabHitTargetsFollowRecencyReordering() async throws {
         for fitted in [true, false] {
             let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 30, width: 700, height: 600), edge: .bottom)

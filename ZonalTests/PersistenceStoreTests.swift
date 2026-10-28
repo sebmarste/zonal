@@ -150,6 +150,7 @@ final class PersistenceStoreTests: XCTestCase {
         draft.theme = .dark
         draft.tabEdge = .bottom
         draft.tabShowsNames = false
+        draft.overlappingZoneTabs = .allWindows
         draft.profiles[0].name = "Edited profile"
         draft.behavior.outlinePulseMode = .allFocusedWindows
 
@@ -163,6 +164,7 @@ final class PersistenceStoreTests: XCTestCase {
         XCTAssertEqual(merged.theme, .dark)
         XCTAssertEqual(merged.tabEdge, .bottom)
         XCTAssertFalse(merged.tabShowsNames)
+        XCTAssertEqual(merged.overlappingZoneTabs, .allWindows)
         XCTAssertEqual(merged.profiles[0].name, "Edited profile")
         XCTAssertEqual(merged.behavior.outlinePulseMode, .allFocusedWindows)
         XCTAssertEqual(merged.excludedBundleIdentifiers, external.excludedBundleIdentifiers)

@@ -457,7 +457,25 @@ struct WindowDefaultZoneRule: Codable, Equatable, Identifiable {
     var id: String { bundleIdentifier }
 }
 
+enum OverlappingZoneTabs: String, Codable, CaseIterable, Identifiable {
+    case currentZoneOnly
+    case zoneShortcuts
+    case allWindows
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .currentZoneOnly: "Current zone only"
+        case .zoneShortcuts: "Zone shortcuts"
+        case .allWindows: "All windows"
+        }
+    }
+}
+
 struct ZonalConfiguration: Codable, Equatable {
+    // An absent setting in the current format retains the original shortcut presentation.
+    var overlappingZoneTabs: OverlappingZoneTabs?
+
     var tabEdge: ZoneTabEdge = .top
     var tabShowsNames = true
     var schemaVersion: Int

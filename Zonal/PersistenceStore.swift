@@ -157,6 +157,7 @@ final class PersistenceStore {
         merge(\.theme)
         merge(\.tabEdge)
         merge(\.tabShowsNames)
+        merge(\.overlappingZoneTabs)
         merge(\.dragZoneActivationMode)
         merge(\.showInteractionDiagnostics)
         merge(\.showActiveWindowOutline)
@@ -429,6 +430,7 @@ struct ConfigurationRuntimePolicy {
         guard let previous else { return true }
         return previous.tabEdge != current.tabEdge
             || previous.tabShowsNames != current.tabShowsNames
+            || previous.overlappingZoneTabs != current.overlappingZoneTabs
             || previous.activeProfileID != current.activeProfileID
             || previous.excludedBundleIdentifiers != current.excludedBundleIdentifiers
             || previous.windowDefaultZoneRules != current.windowDefaultZoneRules

@@ -352,7 +352,7 @@ struct ZoneCard: View {
                             .frame(width: 48, alignment: .trailing)
                     }
                 }
-                Text("Zones with the same frame and display share tabs automatically. The focused zone shows its full tab list, with one shortcut per other zone at the far end. The main zone’s appearance and border size take priority when it has tabs enabled.")
+                Text("Zones with the same frame and display share tabs automatically. Choose which windows appear under General → Tabs → Overlapping zone tabs. The main zone’s appearance and border size take priority when it has tabs enabled.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("Tabs follow the switcher’s most-recent-first order. Fitted windows share the space beside the tabs.")
