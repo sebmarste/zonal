@@ -1,4 +1,4 @@
-name: Prepare beta
+name: Release
 on:
   push:
     branches: [main]
@@ -20,9 +20,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
+    name: Prepare draft
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: release-publishing
     timeout-minutes: 10
     permissions:
       contents: write
@@ -48,6 +48,7 @@ jobs:
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
         run: python3 .github/scripts/prepare-release.py
   build:
+    name: Build and notarize
     needs: prepare
     if: needs.prepare.outputs.enabled == 'true' && needs.prepare.outputs.artifact_run_id == ''
     runs-on: xcode-27
@@ -97,10 +98,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
   retain:
+    name: Upload and publish
     needs: [prepare, build]
-    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.enabled == 'true' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.prepare.outputs.artifact_run_id != ''))
+    if: always() && github.ref == 'refs/heads/main' && needs.prepare.result == 'success' && needs.prepare.outputs.enabled == 'true' && (needs.build.result == 'success' || (needs.build.result == 'skipped' && needs.prepare.outputs.artifact_run_id != ''))
     runs-on: xcode-27
-    environment: release-publishing
     timeout-minutes: 20
     permissions:
       actions: read
@@ -117,10 +118,11 @@ jobs:
           path: ${{ runner.temp }}/candidate
           run-id: ${{ needs.prepare.outputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
-      - name: Retain verified bytes in a draft GitHub beta
+      - name: Upload verified assets and publish beta
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           gh auth setup-git
           ./.github/scripts/publish-release "$RUNNER_TEMP/candidate" --tag "$RELEASE_TAG"
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --verify-tag

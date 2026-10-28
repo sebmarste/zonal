@@ -111,7 +111,7 @@ def prepare():
     draft = json.loads(run('gh', 'release', 'view', tag, '--json', 'isDraft,body,assets'))
     check_candidate_state(draft, retry, retained)
     output(enabled='true', tag=tag, commit=commit, notes=draft['body'], artifact_run_id=retry)
-    print(f'Prepared {tag} at {commit}; public publishing remains manual.')
+    print(f'Prepared {tag} at {commit}; publication follows successful artifact verification.')
 
 
 if __name__ == '__main__':
