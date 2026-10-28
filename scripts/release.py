@@ -257,15 +257,17 @@ def upload(output, tag):
     require(release.get('body', '').strip() == (output / 'release-notes.md').read_text().strip(),
             'Draft notes differ from archived candidate; restore the archived text before uploading')
     existing = {asset['name'] for asset in release['assets']}
+    names = {*data['artifacts'], 'manifest.json', 'SHA256SUMS'}
+    require(existing <= names, 'Draft contains unexpected assets; refusing publication')
     for name in [*data['artifacts'], 'manifest.json', 'SHA256SUMS']:
-        if name in existing:
-            with tempfile.TemporaryDirectory(prefix='zonal-release-existing-') as folder:
-                run('gh', 'release', 'download', tag, '--pattern', name, '--dir', folder)
-                require(digest(Path(folder) / name) == digest(output / name),
-                        f'Existing asset differs: {name}; refusing overwrite')
-        else:
+        if name not in existing:
             run('gh', 'release', 'upload', tag, output / name)
-    print(f'Draft {tag} retained with symbols and evidence. Review before publishing; nothing made public.')
+        # Verify uploaded bytes too, before CI makes the draft public.
+        with tempfile.TemporaryDirectory(prefix='zonal-release-existing-') as folder:
+            run('gh', 'release', 'download', tag, '--pattern', name, '--dir', folder)
+            require(digest(Path(folder) / name) == digest(output / name),
+                    f'Remote asset differs: {name}; refusing publication or overwrite')
+    print(f'Draft {tag} retained with symbols and evidence. All remote assets verified; ready for publication.')
 
 
 def main():
