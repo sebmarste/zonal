@@ -42,6 +42,13 @@ extension SettingsView {
                         Text("Icons and full names").tag(true)
                         Text("Icons only").tag(false)
                     }
+                    Picker("Overlapping zone tabs", selection: Binding(
+                        get: { configuration.overlappingZoneTabs ?? .zoneShortcuts },
+                        set: { configuration.overlappingZoneTabs = $0; persist() })) {
+                        ForEach(OverlappingZoneTabs.allCases) { Text($0.title).tag($0) }
+                    }
+                    Text("For zones with identical frames on the same display. All windows combines their most-recent-first history; the leading icon follows the active window’s zone.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Applies to tabs in every zone and display profile.").font(.caption).foregroundStyle(.secondary)
                 }
             }

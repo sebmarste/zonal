@@ -617,7 +617,7 @@ struct ZoneTabStripView: View {
                 .background(Color.white.opacity(0.22),
                             in: RoundedRectangle(cornerRadius: 4))
                 .contentShape(Rectangle())
-                .help("\(item.appName) — \(item.title ?? item.appName)")
+                .help("\(item.zoneName) · \(item.appName) — \(item.title ?? item.appName)")
         }
     }
 }
@@ -679,6 +679,7 @@ private struct ZoneTabButton: NSViewRepresentable {
                 }
             }
         }
+        button.toolTip = "\(item.zoneName) · \(item.appName) — \(title)"
         button.setAccessibilityLabel("\(item.zoneName), \(item.appName), \(title)")
         button.setAccessibilityValue(item.isActive ? "Selected" : "")
     }

@@ -692,8 +692,20 @@ final class WorkspaceStateService {
             let primaryZone = focused.flatMap { zoneByAssignment[$0] }
                 ?? state.globalRecency.lazy.compactMap { zoneByAssignment[$0] }.first
                 ?? (itemsByZone[zone.id]?.isEmpty == false ? zone.id : stackItems[0].zoneID)
-            let ownItems = itemsByZone[primaryZone] ?? []
-            let otherItems = members.filter { $0.id != primaryZone }.compactMap { itemsByZone[$0.id]?.first }
+            let configuration = store.loadConfiguration()
+            var ownItems = itemsByZone[primaryZone] ?? []
+            var otherItems: [SwitcherItem] = []
+            switch configuration.overlappingZoneTabs ?? .zoneShortcuts {
+            case .currentZoneOnly:
+                break
+            case .zoneShortcuts:
+                otherItems = members.filter { $0.id != primaryZone }.compactMap { itemsByZone[$0.id]?.first }
+            case .allWindows:
+                let byID = Dictionary(uniqueKeysWithValues: stackItems.map { ($0.assignmentID, $0) })
+                ownItems = SwitcherMRUOrder().orderedAssignmentIDs(
+                    available: stackItems.map(\.assignmentID), current: focused, history: state.globalRecency
+                ).compactMap { byID[$0] }
+            }
             return ZoneTabSnapshot(zoneID: zone.id, edge: store.loadConfiguration().tabEdge,
                 layout: ZoneTabLayout(zoneFrame: layoutEngine.zoneFrame(for: zone, in: display.placementFrame, spacing: context.profile.zoneSpacing), edge: store.loadConfiguration().tabEdge, style: zone.tabStyle, borderWidth: zone.tabBorderWidth),
                 items: ownItems, showsNames: store.loadConfiguration().tabShowsNames, outlineStyle: WindowOutlineStyle(configuration: store.loadConfiguration()),
