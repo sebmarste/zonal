@@ -106,7 +106,8 @@ class ReleaseTests(unittest.TestCase):
             if args[:3] == ('gh', 'release', 'view'):
                 return json.dumps({'isDraft': True, 'body': 'release-notes.md', 'assets': [{'name': 'Zonal-1.2.3.dmg'}]})
             if args[:3] == ('gh', 'release', 'download'):
-                (Path(args[-1]) / 'Zonal-1.2.3.dmg').write_bytes((self.output / 'Zonal-1.2.3.dmg').read_bytes())
+                name = args[args.index('--pattern') + 1]
+                (Path(args[-1]) / name).write_bytes((self.output / name).read_bytes())
         with patch.object(release, 'verify', return_value=self.data), \
              patch.object(release, 'source_commit', return_value='a' * 40), \
              patch.object(release.subprocess, 'run') as process, patch.object(release, 'run', side_effect=run):
@@ -154,9 +155,27 @@ class ReleaseTests(unittest.TestCase):
              patch.object(release, 'source_commit', return_value='a' * 40), \
              patch.object(release.subprocess, 'run') as process, patch.object(release, 'run', side_effect=run):
             process.return_value.returncode = 0
-            with self.assertRaisesRegex(ValueError, 'Existing asset differs'):
+            with self.assertRaisesRegex(ValueError, 'Remote asset differs'):
                 release.upload(self.output, 'v1.2.3')
         self.assertFalse(any(call[:3] == ('gh', 'release', 'upload') for call in calls))
+
+    def test_new_upload_is_downloaded_and_verified_before_success(self):
+        calls = []
+        def run(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ('git', 'ls-remote'):
+                return 'a' * 40 + '\trefs/tags/v1.2.3\n'
+            if args[:3] == ('gh', 'release', 'view'):
+                return json.dumps({'isDraft': True, 'body': 'release-notes.md', 'assets': []})
+            if args[:3] == ('gh', 'release', 'download'):
+                (Path(args[-1]) / 'Zonal-1.2.3.dmg').write_text('different bytes')
+        with patch.object(release, 'verify', return_value=self.data), \
+             patch.object(release, 'source_commit', return_value='a' * 40), \
+             patch.object(release.subprocess, 'run') as process, patch.object(release, 'run', side_effect=run):
+            process.return_value.returncode = 0
+            with self.assertRaisesRegex(ValueError, 'Remote asset differs'):
+                release.upload(self.output, 'v1.2.3')
+        self.assertEqual(sum(call[:3] == ('gh', 'release', 'upload') for call in calls), 1)
 
 
 if __name__ == '__main__':

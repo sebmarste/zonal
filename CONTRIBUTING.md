@@ -185,36 +185,22 @@ are not evidence of Intel runtime compatibility; see README for live-tested limi
 ## Release process
 
 Merging an increased app version and build number in `Zonal/Info.plist` to protected
-`main` starts **Prepare beta**. Other merges do not create releases. The workflow
-creates an immutable version tag and a draft with generated release notes, runs
-checks, builds both architectures, signs with Developer ID, notarizes, staples,
-and verifies the download. Only the maintainer has repository write access;
-required PR checks protect `main`. Merging a version bump authorizes signing.
+`main` starts **Release**. Other merges do not create releases. CI creates an
+immutable version tag, runs checks, builds both architectures, signs with Developer
+ID, notarizes and staples the app and DMG, and verifies the uploaded artifacts.
+It then automatically publishes the release as a public beta with generated notes.
+A draft holds the assets until verification succeeds; failures leave it unpublished.
 
-The signing and publishing environments accept only workflows running from `main`,
-with no separate deployment approval. PR checks have no signing credentials.
-Signing keeps read-only repository permissions; tag/draft creation and artifact
-upload use separate jobs with write access. Manual retries accept only tags whose
-commits are already in `main`.
+Only the maintainer can update `main`, and required PR checks protect merges.
+The `release-signing` environment accepts only workflows running from `main`.
+PR checks have no signing credentials. Signing has read-only repository access;
+separate jobs create the tag and publish the verified artifacts.
 
-The app and its drag-to-Applications DMG are notarized and stapled, so the copied
-app also carries its ticket. DMG layout tooling is installed in a temporary Python
-environment from hash-pinned wheels; normal development needs no extra packages.
-The workflow retains the DMG, notes, checksums, provenance, archive and matching
-dSYMs in a **draft release**. Inspect the download and review its notes, then
-publish manually on GitHub. Workflow success never publishes publicly.
-
-If a build fails before retaining a candidate, dispatch **Prepare beta** from `main`
-with its existing tag. If a candidate was retained, set `artifact_run_id` to that
-run's ID: the workflow reuses those bytes instead of rebuilding. Existing assets
-must match byte-for-byte. During upload, draft notes must match the archived notes;
-restore them from `release-notes.md` if a retry follows edits to the draft.
-
-GitHub release assets retain shipped artifacts and symbols; Actions artifacts are
-a temporary recovery buffer (90 days for candidates, 14 days for failed-build evidence).
-Shared build/verification logic stays in `scripts/release.py`; GitHub runner setup
-and upload entry points live in `.github/scripts`. Local signing remains supported
-as a fallback. Account setup and operational runbooks are maintained privately.
+Release assets retain the installer, checksums, source/toolchain provenance and
+matching debug symbols. Shared local/CI build and verification code lives in
+`scripts/release.py`; GitHub-specific setup lives in `.github/scripts`.
+Local signing remains available as a fallback. Credential setup and recovery
+procedures are maintained in the private maintainer runbook.
 
 ## Terminology
 
