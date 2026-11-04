@@ -337,7 +337,7 @@ struct SwitcherFilterPolicy {
         var filtered = model
         filtered.zones = model.zones.map { zone in
             var next = zone
-            next.items = zone.items.filter { matches($0, tokens: tokens) }
+            next.items = zone.items.filter { self.matches($0, tokens: tokens) }
             return next
         }
         let matches = filtered.zones.flatMap(\.items)

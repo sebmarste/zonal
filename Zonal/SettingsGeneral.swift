@@ -157,6 +157,10 @@ extension SettingsView {
 
     var behaviorSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Toggle("Show clock in main stack tab bar", isOn: behaviorBinding(\.showMainStackClock))
+            Text("Keeps the clock in the main zone’s shared tab bar when another zone comes to the front. Requires Tabs presentation.")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
             Text("Automatically restore saved placements").font(.headline)
             Toggle("When Zonal starts", isOn: behaviorBinding(\.restoreOnLaunch))
             Toggle("After wake or unlock", isOn: behaviorBinding(\.restoreOnWake))

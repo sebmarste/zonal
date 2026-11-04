@@ -47,6 +47,7 @@ struct WindowBehaviorSettings: Codable, Equatable {
     var showSwitcherShortcutGuide = true
     var switcherDisplayScope: SwitcherDisplayScope = .allDisplays
     var outlinePulseMode: OutlinePulseMode = .switcherOnly
+    var showMainStackClock = false
     var restoreOnLaunch = true
     var restoreOnWake = true
     var restoreOnDisplayChange = true
@@ -56,6 +57,7 @@ struct WindowBehaviorSettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case feedbackMode, feedbackCorner, switcherDisplayScope, outlinePulseMode
+        case showMainStackClock
         case showSwitcherShortcutGuide = "showSwitcherHotkeys"
         case restoreOnLaunch, restoreOnWake, restoreOnDisplayChange, restoreOnSpaceChange
     }
@@ -67,6 +69,7 @@ struct WindowBehaviorSettings: Codable, Equatable {
         feedbackCorner = try values.decode(FloatingHUDCorner.self, forKey: .feedbackCorner)
         switcherDisplayScope = try values.decode(SwitcherDisplayScope.self, forKey: .switcherDisplayScope)
         outlinePulseMode = try values.decode(OutlinePulseMode.self, forKey: .outlinePulseMode)
+        showMainStackClock = try values.decodeIfPresent(Bool.self, forKey: .showMainStackClock) ?? false
         restoreOnLaunch = try values.decode(Bool.self, forKey: .restoreOnLaunch)
         restoreOnWake = try values.decode(Bool.self, forKey: .restoreOnWake)
         restoreOnDisplayChange = try values.decode(Bool.self, forKey: .restoreOnDisplayChange)

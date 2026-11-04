@@ -33,6 +33,12 @@ Zonal is currently a **public beta**. It runs locally, without an account, analy
 | [![Dark mode with zone spacing, a top tab shelf, and the All Windows switcher](docs/images/overlap-panel.png)](docs/images/overlap-panel.png) | [![Dragging a Finder window over zone drop targets](docs/images/drag-to-assign.png)](docs/images/drag-to-assign.png) |
 | <ul><li>Mix presentations across zones (Overlap left; Tab shelf right, tabs at the top).</li><li>Leave space between and around zones (16 pt spacing).</li><li>Switch across all windows (All Windows switcher).</li><li>Match your desktop’s appearance (dark mode; active-window outline off).</li></ul> | <ul><li>Move a window into a zone and resize it (drop on Fit to Zone).</li><li>Move a window while keeping its size (drop elsewhere in the zone).</li></ul> |
 
+The optional **General → Show clock in main stack tab bar** setting (off by default)
+keeps a clock in the shared tab bar containing the main zone, even when another
+zone comes forward. It uses the system’s short time format, updates each minute,
+and shows the date on hover. Horizontal bars place it at the right; vertical bars
+place it at the top. It requires a nonempty stack with Tabs presentation.
+
 ## Install
 
 Download the latest **Zonal DMG** from [GitHub Releases](https://github.com/sebmarste/zonal/releases).

@@ -1193,6 +1193,7 @@ final class ZoneTabTests: XCTestCase {
         let (store, service, tracker, manager, _, original) = try fixture(inventory: inventory)
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
         var config = store.loadConfiguration()
+        config.behavior.showMainStackClock = true
         config.profiles[0].zones = [Zone(id: .left, name: "Left", frame: .full),
             Zone(id: .main, name: "Main", frame: .full, windowPresentation: .tabs),
             Zone(id: .right, name: "Right", frame: .full)]
@@ -1210,6 +1211,7 @@ final class ZoneTabTests: XCTestCase {
             assignmentRecencyByZone: [.left: [assignments[2].id, assignments[1].id]]))
         let bytes = try Data(contentsOf: store.workspaceURL)
         let tabs = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertTrue(tabs.showsClock)
         XCTAssertEqual(service.tabSnapshots().count, 1)
         XCTAssertEqual(tabs.items.map(\.assignmentID), [assignments[0].id])
         XCTAssertEqual(tabs.otherZoneItems.map(\.assignmentID), [assignments[2].id, assignments[3].id])
@@ -1235,6 +1237,7 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertEqual(focusedTabs.otherZoneItems.map(\.assignmentID), [assignments[0].id, assignments[3].id])
         XCTAssertEqual(focusedTabs.zoneID, tabs.zoneID, "Keep the same panel identity when the primary zone changes")
         XCTAssertEqual(focusedTabs.layout, tabs.layout)
+        XCTAssertTrue(focusedTabs.showsClock)
         inventory.focusedWindow = inventory.windows[3]
         _ = tracker.captureFocusedWindow(origin: "shared-tab-test")
         let rightTabs = try XCTUnwrap(service.tabSnapshots().first)
@@ -1370,6 +1373,73 @@ final class ZoneTabTests: XCTestCase {
                         "fitted=\(fitted) order=\(order) frame=\(button.convert(button.bounds, to: host)) hit=\(String(describing: hit))")
                 }
                 XCTAssertEqual(buttons(host).count, 3)
+            }
+        }
+    }
+
+    func testClockOnlyAppearsInMainGroupAndTogglesWithoutChangingPlacement() throws {
+        let (store, service, tracker, _, _, _) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let original = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertFalse(original.showsClock)
+        var config = store.loadConfiguration()
+        config.behavior.showMainStackClock = true
+        store.saveConfiguration(config)
+        XCTAssertTrue(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+        XCTAssertEqual(service.tabSnapshots().first?.layout, original.layout)
+        config.profiles[0].mainZoneID = .left
+        config.profiles[0].zones.append(Zone(id: .left, name: "Main elsewhere",
+            frame: NormalizedFrame(x: 0, y: 0, width: 0.5, height: 1)))
+        store.saveConfiguration(config)
+        service.reconcile()
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+        config.profiles[0].mainZoneID = .main
+        config.behavior.showMainStackClock = false
+        store.saveConfiguration(config)
+        service.reconcile()
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+    }
+
+    func testClockFitsInsideNarrowAndWideStripsOnEveryEdge() throws {
+        func labels(in view: NSView) -> [NSTextField] {
+            if let label = view as? NSTextField, label.accessibilityIdentifier() == "main-stack-clock" { return [label] }
+            return view.subviews.flatMap { labels(in: $0) }
+        }
+        for edge in ZoneTabEdge.allCases {
+            for width: CGFloat in [240, 700] {
+                let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: width, height: 400), edge: edge)
+                let own = (1...6).map { switcherItem(assignmentID: UUID(), windowID: UInt32($0), zoneID: .main) }
+                let peer = switcherItem(assignmentID: UUID(), windowID: 7, zoneID: .left)
+                let model = ZoneTabSnapshot(zoneID: .main, edge: edge, layout: layout, items: own,
+                    otherZoneItems: [peer], showsClock: true)
+                let panel = ZoneTabController.makePanel()
+                defer { panel.orderOut(nil) }
+                panel.setFrame(CGRect(origin: .zero, size: layout.panelFrame(edge: edge).size), display: false)
+                let host = NSHostingView(rootView: ZoneTabStripView(snapshot: model, focus: { _ in }))
+                host.sizingOptions = []
+                panel.contentView = host
+                host.frame = CGRect(origin: .zero, size: panel.frame.size)
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                let label = try XCTUnwrap(labels(in: host).first)
+                XCTAssertEqual(labels(in: host).count, 1)
+                XCTAssertFalse(label.stringValue.isEmpty)
+                XCTAssertFalse(panel.canBecomeKey)
+                let clockBounds = label.convert(label.bounds, to: host)
+                XCTAssertGreaterThan(clockBounds.width, 20)
+                XCTAssertGreaterThanOrEqual(clockBounds.minX, 0)
+                XCTAssertLessThanOrEqual(clockBounds.maxX, host.bounds.maxX)
+                let trailingEdge = layout.stripFrame.maxX - layout.panelFrame(edge: edge).minX - layout.tabPadding
+                XCTAssertLessThanOrEqual(clockBounds.maxX, trailingEdge)
+                XCTAssertGreaterThanOrEqual(clockBounds.maxX, trailingEdge - 12)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: URL(fileURLWithPath: "/tmp/zonal-clock-\(edge.rawValue)-\(Int(width)).png"))
+                host.rootView = ZoneTabStripView(snapshot: ZoneTabSnapshot(zoneID: .main, edge: edge,
+                    layout: layout, items: own), focus: { _ in })
+                host.layoutSubtreeIfNeeded()
+                XCTAssertTrue(labels(in: host).isEmpty)
             }
         }
     }

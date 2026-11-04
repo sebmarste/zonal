@@ -64,6 +64,7 @@ struct ZoneTabSnapshot: Equatable {
     var otherZoneItems: [SwitcherItem] = []
     var stackItems: [SwitcherItem] = []
     var fittedWindowIDs: Set<LiveWindowID> = []
+    var showsClock = false
     var moveDestinations: [Zone] = []
     var sizeActions: [UUID: ZoneTabAction] = [:]
 
@@ -516,23 +517,15 @@ struct ZoneTabStripView: View {
 
     private var tabContent: some View {
         Group {
-            if snapshot.otherZoneItems.isEmpty {
-                ownSection
-            } else if snapshot.edge.isVertical {
+            if snapshot.edge.isVertical {
                 VStack(spacing: 4) {
-                    if !snapshot.items.isEmpty {
-                        ownSection
-                        Divider().frame(height: 1)
-                    }
-                    otherTabs.frame(height: otherExtent)
+                    if snapshot.showsClock { clock.frame(maxWidth: .infinity, alignment: .trailing) }
+                    tabsArea
                 }
             } else {
-                HStack(spacing: 4) {
-                    if !snapshot.items.isEmpty {
-                        ownSection
-                        Divider().frame(width: 1, height: 16)
-                    }
-                    otherTabs.frame(width: otherExtent)
+                HStack(spacing: snapshot.showsClock ? 6 : 0) {
+                    tabsArea
+                    if snapshot.showsClock { clock }
                 }
             }
         }
@@ -541,8 +534,52 @@ struct ZoneTabStripView: View {
                alignment: snapshot.edge.isVertical ? .bottom : .trailing)
     }
 
-    private var otherExtent: CGFloat {
-        let available = max(0, (snapshot.edge.isVertical ? snapshot.layout.stripFrame.height : snapshot.layout.stripFrame.width) - 2 * snapshot.layout.tabPadding)
+    private var clock: some View {
+        TimelineView(.everyMinute) { context in
+            ZoneTabClockLabel(date: context.date)
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .frame(height: 24)
+                .help(context.date.formatted(date: .complete, time: .omitted))
+        }
+        .fixedSize()
+        .layoutPriority(1)
+    }
+
+    private var tabsArea: some View {
+        GeometryReader { geometry in
+            tabsArea(available: snapshot.edge.isVertical ? geometry.size.height : geometry.size.width)
+        }
+    }
+
+    private func tabsArea(available: CGFloat) -> some View {
+        Group {
+            if snapshot.otherZoneItems.isEmpty {
+                ownSection
+            } else if snapshot.edge.isVertical {
+                VStack(spacing: 4) {
+                    if !snapshot.items.isEmpty {
+                        ownSection
+                        Divider().frame(height: 1)
+                    }
+                    otherTabs.frame(height: otherExtent(available: available))
+                }
+            } else {
+                HStack(spacing: 4) {
+                    if !snapshot.items.isEmpty {
+                        ownSection
+                        Divider().frame(width: 1, height: 16)
+                    }
+                    otherTabs.frame(width: otherExtent(available: available))
+                }
+            }
+        }
+        .frame(width: snapshot.edge.isVertical ? nil : available,
+               height: snapshot.edge.isVertical ? available : nil)
+    }
+
+    private func otherExtent(available: CGFloat) -> CGFloat {
+        let available = max(0, available)
         let tabExtent: CGFloat = snapshot.edge.isVertical ? 24 : (snapshot.showsNames ? 156 : 48)
         let ownReserve = snapshot.items.isEmpty ? 0 : min(tabExtent, max(0, (available - 9) / 2)) + 9
         return min(CGFloat(snapshot.otherZoneItems.count) * (tabExtent + 4) - 4, max(0, available - ownReserve))
@@ -619,6 +656,28 @@ struct ZoneTabStripView: View {
                 .contentShape(Rectangle())
                 .help("\(item.zoneName) · \(item.appName) — \(item.title ?? item.appName)")
         }
+    }
+}
+
+struct ZoneTabClockLabel: NSViewRepresentable {
+    var date: Date
+
+    func makeNSView(context: Context) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setAccessibilityIdentifier("main-stack-clock")
+        return label
+    }
+
+    func updateNSView(_ label: NSTextField, context: Context) {
+        label.stringValue = date.formatted(date: .omitted, time: .shortened)
+        label.setAccessibilityLabel("Time")
+        label.setAccessibilityValue(label.stringValue)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
     }
 }
 

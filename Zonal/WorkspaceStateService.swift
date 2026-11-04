@@ -711,6 +711,7 @@ final class WorkspaceStateService {
                 items: ownItems, showsNames: store.loadConfiguration().tabShowsNames, outlineStyle: WindowOutlineStyle(configuration: store.loadConfiguration()),
                 hasFittedWindows: !fittedWindowIDs.isEmpty, otherZoneItems: otherItems, stackItems: stackItems,
                 fittedWindowIDs: fittedWindowIDs,
+                showsClock: configuration.behavior.showMainStackClock && members.contains { $0.id == context.profile.mainZoneID },
                 moveDestinations: context.profile.zones.filter { self.display(for: $0, context: context) != nil },
                 sizeActions: Dictionary(uniqueKeysWithValues: context.assignments.compactMap { assignment in
                     guard stackItems.contains(where: { $0.assignmentID == assignment.id }) else { return nil }

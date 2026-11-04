@@ -627,7 +627,8 @@ final class WindowDiscoveryTests: XCTestCase {
     }
 
     func testTrackingJournalIsBoundedAndContainsNoWindowMetadataFields() {
-        var journal = WindowTrackingJournal(capacity: 3)
+        var journal = WindowTrackingJournal()
+        journal.capacity = 3
         for index in 0..<5 {
             journal.append(
                 event: "focus.observed",

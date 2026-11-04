@@ -5,6 +5,18 @@ import XCTest
 @testable import Zonal
 
 final class ConfigurationTests: XCTestCase {
+    func testMainStackClockDefaultsOffAndPersists() throws {
+        var configuration = ZonalConfiguration.default
+        let data = try JSONEncoder().encode(configuration.behavior)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "showMainStackClock")
+        XCTAssertFalse(try JSONDecoder().decode(WindowBehaviorSettings.self,
+            from: JSONSerialization.data(withJSONObject: json)).showMainStackClock)
+        configuration.behavior.showMainStackClock = true
+        XCTAssertEqual(try JSONDecoder().decode(ZonalConfiguration.self,
+            from: JSONEncoder().encode(configuration)), configuration)
+    }
+
     func testOverlappingTabModesRoundTripAndDefaultWhenAbsent() throws {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
@@ -83,6 +95,7 @@ final class ConfigurationTests: XCTestCase {
         current.profiles[0].zones[0].name = "New zone name"
         current.hotkeys = []
         current.behavior.feedbackMode = .errorsOnly
+        current.behavior.showMainStackClock = true
         XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: previous, current: current))
     }
 

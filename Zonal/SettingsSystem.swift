@@ -21,7 +21,7 @@ extension SettingsView {
                 "Launch Zonal at login",
                 isOn: Binding(
                     get: { appContainer.launchAtLoginState.isRequested },
-                    set: appContainer.setLaunchAtLoginEnabled
+                    set: { appContainer.setLaunchAtLoginEnabled($0) }
                 )
             )
             .disabled(appContainer.launchAtLoginState == .unavailable)
