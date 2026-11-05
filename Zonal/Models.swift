@@ -285,6 +285,13 @@ struct DisplaySetupBinding: Codable, Equatable, Identifiable {
     }
 }
 
+struct ProfileTabAppearance: Codable, Equatable {
+    var edge: ZoneTabEdge
+    var showsNames: Bool
+    var overlappingTabs: OverlappingZoneTabs
+    var showsClock: Bool
+}
+
 struct DisplayProfile: Codable, Equatable, Identifiable {
     var id: String
     var name: String
@@ -293,6 +300,7 @@ struct DisplayProfile: Codable, Equatable, Identifiable {
     var displayRoles: [DisplayRole]
     var zones: [Zone]
     var zoneSpacing: Double
+    var tabAppearance: ProfileTabAppearance?
 
     static let zoneSpacingRange: ClosedRange<Double> = 0...32
 
@@ -303,7 +311,8 @@ struct DisplayProfile: Codable, Equatable, Identifiable {
         setupBindings: [DisplaySetupBinding] = [],
         displayRoles: [DisplayRole] = [],
         zones: [Zone],
-        zoneSpacing: Double = 0
+        zoneSpacing: Double = 0,
+        tabAppearance: ProfileTabAppearance? = nil
     ) {
         self.id = id
         self.name = name
@@ -311,11 +320,12 @@ struct DisplayProfile: Codable, Equatable, Identifiable {
         self.setupBindings = setupBindings
         self.displayRoles = displayRoles
         self.zones = zones
+        self.tabAppearance = tabAppearance
         self.zoneSpacing = zoneSpacing
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, mainZoneID, setupBindings, displayRoles, zones, zoneSpacing
+        case id, name, mainZoneID, setupBindings, displayRoles, zones, zoneSpacing, tabAppearance
     }
 
     init(from decoder: Decoder) throws {
@@ -326,6 +336,7 @@ struct DisplayProfile: Codable, Equatable, Identifiable {
         setupBindings = try values.decode([DisplaySetupBinding].self, forKey: .setupBindings)
         displayRoles = try values.decode([DisplayRole].self, forKey: .displayRoles)
         zones = try values.decode([Zone].self, forKey: .zones)
+        tabAppearance = try values.decodeIfPresent(ProfileTabAppearance.self, forKey: .tabAppearance)
         zoneSpacing = try values.decodeIfPresent(Double.self, forKey: .zoneSpacing) ?? 0
     }
 }
@@ -1731,5 +1742,12 @@ struct HotkeyBinding: Codable, Equatable, Identifiable {
         self.keyLabel = keyLabel
         self.modifiers = modifiers
         self.isEnabled = isEnabled
+    }
+}
+
+extension ZonalConfiguration {
+    func tabAppearance(for profile: DisplayProfile) -> ProfileTabAppearance {
+        profile.tabAppearance ?? ProfileTabAppearance(edge: tabEdge, showsNames: tabShowsNames,
+            overlappingTabs: overlappingZoneTabs ?? .zoneShortcuts, showsClock: behavior.showMainStackClock)
     }
 }

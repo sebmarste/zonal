@@ -166,6 +166,7 @@ final class PersistenceStore {
         merge(\.useNativeCommandTabInFullScreen)
         merge(\.behavior.feedbackMode)
         merge(\.behavior.feedbackCorner)
+        merge(\.behavior.showMainStackClock)
         merge(\.behavior.showSwitcherShortcutGuide)
         merge(\.behavior.switcherDisplayScope)
         merge(\.behavior.outlinePulseMode)
@@ -434,12 +435,15 @@ struct ConfigurationRuntimePolicy {
             || previous.activeProfileID != current.activeProfileID
             || previous.excludedBundleIdentifiers != current.excludedBundleIdentifiers
             || previous.windowDefaultZoneRules != current.windowDefaultZoneRules
-            || runtimeProfiles(previous.profiles) != runtimeProfiles(current.profiles)
+            || runtimeProfiles(previous) != runtimeProfiles(current)
     }
 
-    private func runtimeProfiles(_ profiles: [DisplayProfile]) -> [DisplayProfile] {
-        profiles.map { profile in
+    private func runtimeProfiles(_ configuration: ZonalConfiguration) -> [DisplayProfile] {
+        configuration.profiles.map { profile in
             var runtime = profile
+            var appearance = configuration.tabAppearance(for: profile)
+            appearance.showsClock = false
+            runtime.tabAppearance = appearance
             runtime.name = ""
             for index in runtime.zones.indices { runtime.zones[index].name = "" }
             for index in runtime.displayRoles.indices {

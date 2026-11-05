@@ -372,7 +372,8 @@ final class AppContainer: ObservableObject {
         if ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: prior, current: configuration) {
             workspaceState.reconcile()
             let profile = workspaceState.currentProfileContext().profile
-            let reflowZones = prior?.tabEdge != configuration.tabEdge
+            let previousEdge = appliedPresentationProfile.flatMap { prior?.tabAppearance(for: $0).edge }
+            let reflowZones = previousEdge != configuration.tabAppearance(for: profile).edge
                 ? Set(profile.zones.map(\.id))
                 : ZoneReflowPolicy.changedZones(from: appliedPresentationProfile, to: profile)
             for zone in reflowZones {
@@ -380,6 +381,7 @@ final class AppContainer: ObservableObject {
             }
             appliedPresentationProfile = profile
         }
+        zoneTabs.refresh()
         windowManagementRevision &+= 1
         refreshMenuStatus()
     }

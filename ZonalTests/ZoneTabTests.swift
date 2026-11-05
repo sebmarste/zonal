@@ -5,6 +5,84 @@ import XCTest
 
 @MainActor
 final class ZoneTabTests: XCTestCase {
+    func testProfileSwitchRestoresSpacingTabsAndClockWithoutChangingOtherProfile() throws {
+        let (store, service, tracker, manager, _, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var config = store.loadConfiguration()
+        let baseline = config.profiles[0]
+        var alternate = baseline
+        alternate.id = "alternate"
+        alternate.zoneSpacing = 6
+        alternate.tabAppearance = .init(edge: .left, showsNames: false, overlappingTabs: .allWindows, showsClock: true)
+        config.profiles.append(alternate)
+        for id in [alternate.id, baseline.id, alternate.id] {
+            config.activeProfileID = id
+            XCTAssertTrue(store.saveConfiguration(config))
+            manager.reloadProfiles(); service.reconcile()
+            let current = manager.selectedProfile(for: manager.currentSnapshot())
+            let appearance = config.tabAppearance(for: current)
+            let bounds = LayoutEngine().zoneFrame(for: current.zones[0], in: manager.currentSnapshot().displays[0].placementFrame, spacing: current.zoneSpacing)
+            let expected = ZoneTabLayout(zoneFrame: bounds, edge: appearance.edge, style: current.zones[0].tabStyle).windowFrame
+            let tabs = try XCTUnwrap(service.tabSnapshots().first)
+            XCTAssertEqual(tabs.edge, appearance.edge)
+            XCTAssertEqual(tabs.showsNames, appearance.showsNames)
+            XCTAssertEqual(tabs.showsClock, appearance.showsClock)
+            XCTAssertEqual(tabs.layout.windowFrame, expected)
+            XCTAssertEqual(service.targetFrame(for: assignments[0], profile: current, snapshot: manager.currentSnapshot())?.frame, expected)
+        }
+        XCTAssertEqual(store.loadConfiguration().profiles[0], baseline)
+    }
+
+    func testRedundantFittedFrameNotificationPreservesSpacingIntentButRealResizeIsCustom() throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let profile = manager.selectedProfile(for: manager.currentSnapshot())
+        let target = try XCTUnwrap(service.targetFrame(for: assignments[0], profile: profile, snapshot: manager.currentSnapshot()))
+        XCTAssertEqual(service.recordCustomFrame(for: windows[0], frame: target.frame), .saved)
+        let fitted = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertTrue(fitted.fitsZone(in: profile.id))
+        let custom = target.frame.insetBy(dx: 100, dy: 100)
+        XCTAssertEqual(service.recordCustomFrame(for: windows[0], frame: custom), .saved)
+        XCTAssertFalse(try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id }).fitsZone(in: profile.id))
+    }
+
+    func testDelayedFrameCaptureCannotWriteOldGeometryIntoNewProfile() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        tracker.onWindowFrameChanged?(windows[0])
+        var config = store.loadConfiguration()
+        var alternate = config.profiles[0]
+        alternate.id = "alternate"
+        alternate.zoneSpacing = 16
+        config.profiles.append(alternate)
+        config.activeProfileID = alternate.id
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles(); service.reconcile()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertNil(saved.placementsByProfileID[alternate.id])
+        XCTAssertTrue(saved.fitsZone(in: alternate.id))
+    }
+
+    func testProfileAppearanceFallsBackToExistingGlobalSettings() throws {
+        var configuration = ZonalConfiguration.default
+        configuration.tabEdge = .bottom
+        configuration.tabShowsNames = false
+        configuration.behavior.showMainStackClock = true
+        let profile = configuration.profiles[0]
+        let saved = try JSONDecoder().decode(ZonalConfiguration.self, from: JSONEncoder().encode(configuration))
+        XCTAssertNil(saved.profiles[0].tabAppearance)
+        XCTAssertEqual(saved.tabAppearance(for: profile), .init(edge: .bottom, showsNames: false, overlappingTabs: .zoneShortcuts, showsClock: true))
+        var customized = profile
+        customized.tabAppearance = .init(edge: .right, showsNames: true, overlappingTabs: .currentZoneOnly, showsClock: false)
+        XCTAssertEqual(configuration.tabAppearance(for: customized), customized.tabAppearance)
+        XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: configuration, current: {
+            var updated = configuration; updated.profiles[0] = customized; return updated
+        }()))
+        // Appearance-only changes do not alter zone geometry; the container compares effective tab edges.
+        XCTAssertTrue(ZoneReflowPolicy.changedZones(from: profile, to: customized).isEmpty)
+    }
+
     func testSpacingUsesSameBoundsForWindowTargetsAndTabSurfaces() throws {
         let (store, service, tracker, manager, _, assignments) = try fixture()
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }

@@ -623,6 +623,11 @@ final class WorkspaceStateService {
         let context = workspaceContext(snapshot: snapshot, profile: profile)
         guard var assignment = assignment(for: window, context: context),
               let zone = context.profile.zones.first(where: { $0.id == assignment.zoneID }) else { return .unavailable }
+        if assignment.fitsZone(in: profile.id),
+           let target = targetFrame(for: assignment, profile: profile, snapshot: snapshot),
+           frame.isClose(to: target.frame, tolerance: 1) {
+            return .saved
+        }
         let frameCenter = CGPoint(x: frame.midX, y: frame.midY)
         let display = context.snapshot.display(containing: frameCenter)
             ?? display(for: zone, context: context)
@@ -699,7 +704,8 @@ final class WorkspaceStateService {
             let configuration = store.loadConfiguration()
             var ownItems = itemsByZone[primaryZone] ?? []
             var otherItems: [SwitcherItem] = []
-            switch configuration.overlappingZoneTabs ?? .zoneShortcuts {
+            let appearance = configuration.tabAppearance(for: context.profile)
+            switch appearance.overlappingTabs {
             case .currentZoneOnly:
                 break
             case .zoneShortcuts:
@@ -710,12 +716,12 @@ final class WorkspaceStateService {
                     available: stackItems.map(\.assignmentID), current: focused, history: state.globalRecency
                 ).compactMap { byID[$0] }
             }
-            return ZoneTabSnapshot(zoneID: zone.id, edge: store.loadConfiguration().tabEdge,
-                layout: ZoneTabLayout(zoneFrame: layoutEngine.zoneFrame(for: zone, in: display.placementFrame, spacing: context.profile.zoneSpacing), edge: store.loadConfiguration().tabEdge, style: zone.tabStyle, borderWidth: zone.tabBorderWidth),
-                items: ownItems, showsNames: store.loadConfiguration().tabShowsNames, outlineStyle: WindowOutlineStyle(configuration: store.loadConfiguration()),
+            return ZoneTabSnapshot(zoneID: zone.id, edge: appearance.edge,
+                layout: ZoneTabLayout(zoneFrame: layoutEngine.zoneFrame(for: zone, in: display.placementFrame, spacing: context.profile.zoneSpacing), edge: appearance.edge, style: zone.tabStyle, borderWidth: zone.tabBorderWidth),
+                items: ownItems, showsNames: appearance.showsNames, outlineStyle: WindowOutlineStyle(configuration: store.loadConfiguration()),
                 hasFittedWindows: !fittedWindowIDs.isEmpty, otherZoneItems: otherItems, stackItems: stackItems,
                 fittedWindowIDs: fittedWindowIDs,
-                showsClock: configuration.behavior.showMainStackClock && members.contains { $0.id == context.profile.mainZoneID },
+                showsClock: appearance.showsClock && members.contains { $0.id == context.profile.mainZoneID },
                 moveDestinations: context.profile.zones.filter { self.display(for: $0, context: context) != nil },
                 sizeActions: Dictionary(uniqueKeysWithValues: context.assignments.compactMap { assignment in
                     guard stackItems.contains(where: { $0.assignmentID == assignment.id }) else { return nil }
@@ -904,7 +910,7 @@ final class WorkspaceStateService {
         case .zoneFit:
             let zoneFrame = layoutEngine.zoneFrame(for: zone, in: display.placementFrame, spacing: context.profile.zoneSpacing)
             if let owner = tabOwner(for: zone, context: context) {
-                return (ZoneTabLayout(zoneFrame: layoutEngine.zoneFrame(for: owner, in: display.placementFrame, spacing: profile.zoneSpacing), edge: store.loadConfiguration().tabEdge, style: owner.tabStyle, borderWidth: owner.tabBorderWidth).windowFrame, display.placementFrame)
+                return (ZoneTabLayout(zoneFrame: layoutEngine.zoneFrame(for: owner, in: display.placementFrame, spacing: profile.zoneSpacing), edge: store.loadConfiguration().tabAppearance(for: profile).edge, style: owner.tabStyle, borderWidth: owner.tabBorderWidth).windowFrame, display.placementFrame)
             }
             guard zone.windowPresentation == .peekStack,
                   let stackAssignments else {
@@ -1332,7 +1338,8 @@ final class WorkspaceStateService {
     private func scheduleCustomFrameCapture(for window: ManagedWindow) {
         pendingFrameUpdates[window.id]?.cancel()
         let policy = CustomFrameCapturePolicy()
-        guard policy.shouldCapture(
+        let captureProfile = profileManager.matchedProfile(for: profileManager.currentSnapshot())
+        guard captureProfile != nil, policy.shouldCapture(
             isSessionRecoveryActive: sessionRecovery.isActive,
             isApplyingPlacement: windowController.isApplyingPlacement(to: window),
             hasActiveUserInteraction: windowController.hasActiveUserInteraction,
@@ -1345,7 +1352,8 @@ final class WorkspaceStateService {
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             defer { self.pendingFrameUpdates.removeValue(forKey: window.id) }
-            guard policy.shouldCapture(
+            guard self.profileManager.matchedProfile(for: self.profileManager.currentSnapshot()) == captureProfile,
+                  policy.shouldCapture(
                       isSessionRecoveryActive: self.sessionRecovery.isActive,
                       isApplyingPlacement: self.windowController.isApplyingPlacement(to: window),
                       hasActiveUserInteraction: self.windowController.hasActiveUserInteraction,

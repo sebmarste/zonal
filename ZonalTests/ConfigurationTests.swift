@@ -125,6 +125,8 @@ final class ConfigurationTests: XCTestCase {
         current.behavior.feedbackMode = .errorsOnly
         current.behavior.showMainStackClock = true
         XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: previous, current: current))
+        current.profiles[0].tabAppearance = current.tabAppearance(for: current.profiles[0])
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: previous, current: current))
     }
 
     func testWorkspaceConfigurationChangesRequireReconciliation() {
