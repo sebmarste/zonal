@@ -59,3 +59,19 @@ already present on this feature branch; native command interaction remains a
 separate live acceptance check. Visual checkbox/clock acceptance is pending user
 confirmation. Build, accepted notary submission, install and runtime evidence are
 retained under `/private/tmp/zonal-profile-appearance/`.
+
+## Follow-up: saved profile clock did not render
+
+The user confirmed the checkbox now saved, but the clock remained absent.
+Live MacBook configuration verified UW's `tabAppearance.showsClock` was true.
+The renderer was resolving appearance from `workspaceContext()`'s cached profile.
+A clock-only change intentionally skips reconciliation, leaving that profile
+copy unchanged. `zoneTabs.refresh()` alone therefore still produced `showsClock=false`.
+
+A new regression test saves a profile clock override and reads the tab snapshot
+without reconciling. It failed on the installed source, then passed after making
+the rendering projection resolve the cached profile ID against the latest saved
+configuration. Geometry and fitted-window membership remain unchanged. Disabling
+clock visibility is also covered. Required checks pass 379 XCTest tests (10
+skipped, zero failures), plus 19 Python tests. This fixes the reproduced stale
+projection; desktop visibility still needs user confirmation.

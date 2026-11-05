@@ -1455,6 +1455,25 @@ final class ZoneTabTests: XCTestCase {
         }
     }
 
+    func testProfileClockRefreshReadsLatestAppearanceWithoutReconciliation() throws {
+        let (store, service, tracker, _, _, _) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let original = try XCTUnwrap(service.tabSnapshots().first)
+        var config = store.loadConfiguration()
+        let baseline = config
+        config.profiles[0].tabAppearance = config.tabAppearance(for: config.profiles[0])
+        config.profiles[0].tabAppearance?.showsClock = true
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: baseline, current: config))
+        XCTAssertTrue(store.saveConfiguration(config))
+        let visible = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertTrue(visible.showsClock)
+        XCTAssertEqual(visible.layout, original.layout)
+        XCTAssertEqual(visible.fittedWindowIDs, original.fittedWindowIDs)
+        config.profiles[0].tabAppearance?.showsClock = false
+        XCTAssertTrue(store.saveConfiguration(config))
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+    }
+
     func testClockOnlyAppearsInMainGroupAndTogglesWithoutChangingPlacement() throws {
         let (store, service, tracker, _, _, _) = try fixture()
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }

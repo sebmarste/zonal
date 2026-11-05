@@ -704,7 +704,9 @@ final class WorkspaceStateService {
             let configuration = store.loadConfiguration()
             var ownItems = itemsByZone[primaryZone] ?? []
             var otherItems: [SwitcherItem] = []
-            let appearance = configuration.tabAppearance(for: context.profile)
+            // Cosmetic changes skip reconciliation, so the inventory's cached profile may be older.
+            let appearanceProfile = configuration.profiles.first { $0.id == context.profile.id } ?? context.profile
+            let appearance = configuration.tabAppearance(for: appearanceProfile)
             switch appearance.overlappingTabs {
             case .currentZoneOnly:
                 break
