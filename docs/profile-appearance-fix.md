@@ -155,3 +155,15 @@ Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-clock-dat
 Evidence remains under `/private/tmp/zonal-clock-date/evidence/`.
 The MacBook remained locked during this work. The pending exact main-browser Fit
 repair above has still not been issued; leave Screen Sharing placements unchanged.
+
+## Unlock follow-up
+
+The user subsequently unlocked the MacBook. Read-only verification confirmed
+`Screen locked: false`, and the same browser assignment/window identity remained
+live (`EA65EAFB-C4F1-4F7F-8CB9-24ACC9A39726`, `28943:cg:16470`). The active runtime
+profile was now **Main** on the built-in display (browser observed/desired
+`[0,39,1800,1098]`), rather than UW. No Fit was issued: the current API operates
+on the active profile and fitting here would not repair the UW placement. Await
+reconnection of the ultrawide and confirmation that UW is the matched runtime
+profile before running the retained exact-target repair. Do not force UW geometry
+onto the built-in display or silently change Main's saved placement.
