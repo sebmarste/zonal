@@ -75,3 +75,18 @@ configuration. Geometry and fitted-window membership remain unchanged. Disabling
 clock visibility is also covered. Required checks pass 379 XCTest tests (10
 skipped, zero failures), plus 19 Python tests. This fixes the reproduced stale
 projection; desktop visibility still needs user confirmation.
+
+The cache fix was built from `67f3340ad0af2cd3b8ee1acdc29b18b7ee1e4d7b` for both
+architectures with Developer ID signing. Apple accepted submission
+`08892585-770a-48c2-96c0-2f1f890c0b99`; stapling, ticket, signature and Gatekeeper
+checks passed. Artifact:
+`/private/tmp/zonal-clock-render-fix/Zonal-clock-render-fix-notarized.zip`, SHA-256
+`1fd6810ceb381b4df9c2b8a9e6d9762f8ce4d328cc5077e440205f8aaf742ee6`.
+Installed binary SHA-256:
+`b8e93a72bae94a8c8afa36a7f2dddaf56ad2d339c348fe3e17b89c05791476bc`.
+Post-install verified one process (PID 2658 at verification) at the exact installed
+path, all four health flags true, all doctor findings OK, and configuration bytes
+unchanged (including UW's enabled clock). Rollback:
+`/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-clock-render-gXE4Z9k6`.
+Evidence is retained under `/private/tmp/zonal-clock-render-fix/evidence/`.
+Visual clock acceptance is still awaiting user confirmation.
