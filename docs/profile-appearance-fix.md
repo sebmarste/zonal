@@ -90,3 +90,45 @@ unchanged (including UW's enabled clock). Rollback:
 `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-clock-render-gXE4Z9k6`.
 Evidence is retained under `/private/tmp/zonal-clock-render-fix/evidence/`.
 Visual clock acceptance is still awaiting user confirmation.
+
+## Main-zone Frame/spacing report after clock confirmation
+
+The user confirmed the clock is visible and supplied a screenshot of a standalone
+main-zone tab strip. Live UW configuration was Frame on all three zones, 6 pt
+spacing, bottom tabs. All three live main-zone windows were saved as `.custom`:
+main browser assignment `EA65EAFB-C4F1-4F7F-8CB9-24ACC9A39726` at
+`[1330,30,2458,1378]`, plus two Screen Sharing windows. With no fitted members,
+`ZoneTabStripView` deliberately uses the strip-only fallback even when Frame is
+configured, and restore preserves custom rectangles instead of applying zone gaps.
+This is the current data/rendering explanation; it does not establish how the
+browser became custom historically.
+
+Planned live repair: fit only that exact browser assignment to Main, preserving
+the Screen Sharing custom placements. A focus-based attempt stopped before any
+fit because actual focus could not be confirmed. To avoid focus races, the local
+API now exposes `fit-assignment <uuid>`, which validates a live managed assignment
+and calls the existing exact-target tab Fit operation. Invalid/missing UUIDs are
+covered. Required checks passed 380 XCTest tests (10 skipped, zero failures) and
+19 Python tests.
+
+Source `df36de4fde156d54985bed1d26c25608ee9c0471` was built/signature-verified for
+both architectures and accepted under notarization submission
+`fdeaf7b5-e853-47e7-ac29-f1297c60c344`. Artifact:
+`/private/tmp/zonal-exact-fit/Zonal-exact-fit-notarized.zip`, SHA-256
+`cc65cd513a231ff44ca136059e995dd6cf00a9636ec33d398fdd1bbfebaf193b`.
+Installed binary SHA-256
+`e0d5861cfb05b5cf709a4a8845c1dac39ee3979f08484aa806fe6ea83fdc3628`.
+Installed signature, ticket, Gatekeeper, exact executable path and one running
+process (PID 4763 at verification) passed; all health flags and doctor findings
+were OK. Configuration was preserved. Rollback:
+`/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-exact-fit-g3XSdvCH`.
+
+The repair has **not executed**: after restart, live window inventory was empty;
+a normal rescan and `CGSessionCopyCurrentDictionary` confirmed the MacBook was
+locked. The identity guard rejected the missing target before issuing Fit. Await
+unlock, then verify exact live identity and issue `fit-assignment` once. Retained
+repair script `/private/tmp/zonal-exact-fit/repair-main.py` must use remote stage
+`/Users/sebmarste/.local/share/macbook-deploy/staging/upload.HjKv077u` in place of
+`REPAIR_STAGE`. It verifies a `.zoneFit` result, observed/desired frame agreement,
+and unchanged Screen Sharing profile placements. Do not retry an uncertain fit
+without reading the actual result. Native Frame/spacing acceptance remains open.
