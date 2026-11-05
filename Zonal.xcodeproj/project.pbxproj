@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C01100000000000000000001 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01200000000000000000001 /* AppCommands.swift */; };
 		7FAA49BDBD0867042A966965 /* WindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7BF1BB9645050DE926886C /* WindowTracker.swift */; };
 		FFD3FF49EAB0559DDD82A8B0 /* SupportReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9203E749717EA35DE8CC3CF9 /* SupportReport.swift */; };
 		FA5AA726C856605356CE1ED6 /* StatusItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */; };
@@ -82,6 +83,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C01200000000000000000001 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		3E7BF1BB9645050DE926886C /* WindowTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTracker.swift; sourceTree = "<group>"; };
 		9203E749717EA35DE8CC3CF9 /* SupportReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportReport.swift; sourceTree = "<group>"; };
 		20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusItemController.swift; sourceTree = "<group>"; };
@@ -195,6 +197,7 @@
 				20FF384CB8E37DCA9E650BB4 /* StatusItemController.swift */,
 				9203E749717EA35DE8CC3CF9 /* SupportReport.swift */,
 				3E7BF1BB9645050DE926886C /* WindowTracker.swift */,
+				C01200000000000000000001 /* AppCommands.swift */,
 				A00200000000000000000001 /* ZonalApp.swift */,
 				A00200000000000000000002 /* Models.swift */,
 				A00200000000000000000003 /* DefaultProfiles.swift */,
@@ -368,6 +371,7 @@
 				FA5AA726C856605356CE1ED6 /* StatusItemController.swift in Sources */,
 				FFD3FF49EAB0559DDD82A8B0 /* SupportReport.swift in Sources */,
 				7FAA49BDBD0867042A966965 /* WindowTracker.swift in Sources */,
+				C01100000000000000000001 /* AppCommands.swift in Sources */,
 				A00100000000000000000001 /* ZonalApp.swift in Sources */,
 				A00100000000000000000002 /* Models.swift in Sources */,
 				A00100000000000000000003 /* DefaultProfiles.swift in Sources */,

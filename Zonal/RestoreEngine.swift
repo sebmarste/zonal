@@ -775,6 +775,7 @@ final class RestoreEngine {
               let frame = windowController.frame(of: window) else { return }
         let change: ManualWindowChange?
         switch action {
+        case .appCommands: return
         case .move(let zoneID):
             guard zoneID != assignment.zoneID else { return }
             change = workspaceState.tabMoveChange(for: assignment, currentFrame: frame, to: zoneID, context: context)

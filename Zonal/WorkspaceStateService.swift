@@ -677,7 +677,11 @@ final class WorkspaceStateService {
                     history: state.assignmentRecencyByZone[member.id] ?? [], currentAssignmentID: current)
                 let active = shared ? focused : ordered.first.flatMap { assignmentMap[$0.id]?.id }
                 let projected = items(windows: ordered, assignmentByWindowID: assignmentMap,
-                    activeAssignmentIDs: active.map { Set([$0]) } ?? [], profile: context.profile)
+                    activeAssignmentIDs: active.map { Set([$0]) } ?? [], profile: context.profile).map { item in
+                        var result = item
+                        result.isFocused = item.assignmentID == focused
+                        return result
+                    }
                 stackItems += projected
                 itemsByZone[member.id] = projected
                 for window in windows where assignmentMap[window.id].map({

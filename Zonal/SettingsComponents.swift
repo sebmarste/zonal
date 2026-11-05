@@ -637,6 +637,7 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
     case previousWindowInStack
     case openGlobalSwitcher
     case openZoneSwitcher
+    case openAppCommands
     case undo
     case restore
 
@@ -650,6 +651,7 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
         case .nextWindowInStack: self = .nextWindowInStack
         case .previousWindowInStack: self = .previousWindowInStack
         case .openGlobalSwitcher: self = .openGlobalSwitcher
+        case .openAppCommands: self = .openAppCommands
         case .openZoneSwitcher: self = .openZoneSwitcher
         case .restore: self = .restore
         case .undo: self = .undo
@@ -676,6 +678,8 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
             return .previousWindowInStack
         case .openGlobalSwitcher:
             return .openGlobalSwitcher
+        case .openAppCommands:
+            return .openAppCommands
         case .openZoneSwitcher:
             return .openZoneSwitcher
         }

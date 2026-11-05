@@ -714,6 +714,7 @@ private struct ZoneTabButton: NSViewRepresentable {
     }
 
     func updateNSView(_ button: ZoneTabNativeButton, context: Context) {
+        button.isActiveTab = item.isFocused
         button.assignmentID = item.assignmentID
         button.focus = focus
         button.zoneID = item.zoneID
@@ -761,6 +762,7 @@ final class ZoneTabButtonCell: NSButtonCell {
 
 // Commit the exact target at mouse-down; an MRU redraw during mouse-up cannot select its neighbor.
 final class ZoneTabNativeButton: NSButton {
+    var isActiveTab = false
     var sourceIcon: NSImage?
     var assignmentID: UUID?
     var focus: ((UUID) -> Void)?
@@ -792,6 +794,11 @@ final class ZoneTabNativeButton: NSButton {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let assignmentID else { return nil }
         let menu = NSMenu()
+        if isActiveTab {
+            let performAction = self.performAction
+            menu.addItem(ZoneTabMenuItem(title: "App Commands…") { performAction?(assignmentID, .appCommands) })
+            menu.addItem(.separator())
+        }
         for zone in destinations where zone.id != zoneID {
             let performAction = self.performAction
             let item = ZoneTabMenuItem(title: "Move to \(ZoneNameResolver().name(for: zone.id, in: destinations))") {

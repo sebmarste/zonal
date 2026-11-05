@@ -5,6 +5,34 @@ import XCTest
 @testable import Zonal
 
 final class ConfigurationTests: XCTestCase {
+    func testAppCommandSearchUsesEveryTokenAndFullPath() {
+        let command = AppCommandPath(indices: [2, 3], titles: ["File", "Export PDF…"])
+        XCTAssertEqual(command.display, "File › Export PDF…")
+        XCTAssertTrue(command.matches("pdf FILE"))
+        XCTAssertFalse(command.matches("pdf edit"))
+        XCTAssertNotEqual(command, AppCommandPath(indices: [2, 4], titles: command.titles))
+        XCTAssertNotEqual(command, AppCommandPath(indices: command.indices, titles: ["File", "Delete"]))
+    }
+
+    func testAppCommandsShortcutRoundTripsWithoutZones() throws {
+        let command = HotkeyCommand.openAppCommands
+        XCTAssertEqual(try JSONDecoder().decode(HotkeyCommand.self, from: JSONEncoder().encode(command)), command)
+        XCTAssertEqual(HotkeyCommandKind(command: command).command(zoneID: .center), command)
+    }
+
+    func testCommandOverlayCapturesTypingAndModifiedKeysWithoutSwitcherRelease() throws {
+        var snapshot = HotkeyCaptureSnapshot(appCommandsActive: true)
+        snapshot.flagsChanged([])
+        for code in [0, 53, 36, 123, 124, 125, 126, 51] {
+            let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true))
+            event.flags = [.maskCommand]
+            XCTAssertTrue(snapshot.captures(event))
+        }
+        snapshot.update(HotkeyCaptureSnapshot())
+        let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        XCTAssertFalse(snapshot.captures(event))
+    }
+
     func testMainStackClockDefaultsOffAndPersists() throws {
         var configuration = ZonalConfiguration.default
         let data = try JSONEncoder().encode(configuration.behavior)
@@ -657,4 +685,72 @@ final class ConfigurationTests: XCTestCase {
     }
 
 
+}
+
+// Fake AX attributes: no Accessibility permission or live app is involved.
+private final class CommandMenuFixture {
+    let pid: pid_t = 910001
+    let window = AXUIElementCreateApplication(910002)
+    let bar = AXUIElementCreateApplication(910003)
+    let file = AXUIElementCreateApplication(910004)
+    let menu = AXUIElementCreateApplication(910005)
+    let first = AXUIElementCreateApplication(910006)
+    let second = AXUIElementCreateApplication(910007)
+    var current = true
+    var enabled = true
+    var replacement: AXUIElement?
+    var presses: [AXUIElement] = []
+    var outcome: AXError = .success
+    lazy var reader = AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
+        if name == kAXFocusedApplicationAttribute { return AXUIElementCreateApplication(self.current ? self.pid : 910099) }
+        if name == kAXFocusedWindowAttribute { return self.window }
+        if name == kAXMenuBarAttribute { return self.bar }
+        if name == kAXChildrenAttribute {
+            if CFEqual(element, self.bar) { return [self.file] as CFArray }
+            if CFEqual(element, self.file) { return [self.menu] as CFArray }
+            if CFEqual(element, self.menu) { return [self.first, self.replacement ?? self.second] as CFArray }
+            return [] as CFArray
+        }
+        if name == kAXRoleAttribute { return (CFEqual(element, self.menu) ? kAXMenuRole : kAXMenuItemRole) as CFString }
+        if name == kAXTitleAttribute { return (CFEqual(element, self.file) ? "File" : "Duplicate") as CFString }
+        if name == kAXEnabledAttribute { return (self.enabled ? kCFBooleanTrue : kCFBooleanFalse) }
+        if name == kAXMenuItemCmdCharAttribute { return "d" as CFString }
+        if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
+        return nil
+    }, press: { [unowned self] element in self.presses.append(element); return self.outcome })
+}
+
+extension ConfigurationTests {
+    func testAppCommandsPreserveDuplicateIdentityAndShortcutModifiers() throws {
+        let fixture = CommandMenuFixture()
+        let (roots, complete) = fixture.reader.read()
+        XCTAssertTrue(complete)
+        let commands = try XCTUnwrap(roots.first).children
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertNotEqual(commands[0].path, commands[1].path)
+        XCTAssertEqual(commands[1].shortcut, "⌥⇧⌘D")
+        XCTAssertNil(fixture.reader.execute(commands[1]))
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(fixture.presses[0], fixture.second))
+    }
+
+    func testAppCommandsRejectFocusChangesDisabledAndReplacedElements() throws {
+        for failure in 0..<3 {
+            let fixture = CommandMenuFixture()
+            let command = try XCTUnwrap(fixture.reader.read().0.first?.children.last)
+            if failure == 0 { fixture.current = false }
+            if failure == 1 { fixture.enabled = false }
+            if failure == 2 { fixture.replacement = AXUIElementCreateApplication(910008) }
+            XCTAssertNotNil(fixture.reader.execute(command))
+            XCTAssertTrue(fixture.presses.isEmpty)
+        }
+    }
+
+    func testAppCommandTimeoutNeverRetries() throws {
+        let fixture = CommandMenuFixture()
+        let command = try XCTUnwrap(fixture.reader.read().0.first?.children.last)
+        fixture.outcome = .cannotComplete
+        XCTAssertNotNil(fixture.reader.execute(command))
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
 }

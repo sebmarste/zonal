@@ -48,3 +48,35 @@ Battery, sound, Wi-Fi, third-party status items, and custom widgets remain out o
 scope. The system menu bar stays available through macOS auto-hide; do not modify
 its setting without a request. Run required checks and keep deterministic tests
 independent of live AX permissions. Keep work on the feature branch.
+
+## Continuation on Mini, 2026-11-05
+
+`feature/main-stack-commands` starts at the clean clock head `98b4512`.
+Fetched upstream: `origin/feature/main-stack-clock` remains `98b4512`;
+`origin/main` remains `f9e3102`.
+
+The clock-only source was archived for arm64 and x86_64 with the real timestamped
+Developer ID Application identity, team `XW6G452649`. Strict/deep verification,
+hardened runtime, architecture and ZIP checks passed. Retained artifact:
+`/private/tmp/zonal-clock-98b4512/Zonal-clock-98b4512-DeveloperID.zip`.
+SHA-256: `77b06fc4998a05520cf72f8bc5abbad66661ce03841e61e1d6ca4a572d3fd260`.
+The archive and build/notary evidence are in that directory. This ZIP is **not
+notarized**: the documented `zonal-release` profile was missing. The user is
+setting up that profile locally. Resume with the existing `submission.zip`,
+notarize using `scripts/release.py` helpers, staple/validate the archive's app,
+verify Gatekeeper, and create a fresh ZIP from the stapled app before staging.
+The old ZIP checksum will change after stapling. Do not install the unstapled ZIP.
+
+MacBook access was intermittent but recovered. Live read-only checks verified
+`/Applications/Zonal.app`, original 0.5.4 (76), Developer ID team `XW6G452649`,
+stapled notarization ticket, one running process at the installed path, all four
+health flags true, and all doctor findings OK. No replacement was performed.
+Preserve this copy and configuration when installing the notarized clock build.
+
+The app-command implementation and its limitations are documented in
+`docs/app-commands.md`. Required checks passed: 373 XCTest tests, 10 skipped,
+zero failures; 19 Python tests. Fixtures are independent of AX permission.
+Live GUI acceptance remains open: the focus probe retained the original target
+AX window but was not key; desktop capture failed with `cgWindowNotFound`.
+Native typing and transparent corners have not been observed. No release,
+main push, or merge was performed.

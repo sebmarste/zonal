@@ -18,17 +18,20 @@ enum ShortcutRecordingSession {
 struct HotkeyCaptureSnapshot {
     var bindings: [HotkeyBinding] = []
     var useNativeCommandTab = false
+    var appCommandsActive = false
     var switcherActive = false
     private var releaseModifier: CGEventFlags?
     private var releasePending = false
 
-    init(bindings: [HotkeyBinding] = [], useNativeCommandTab: Bool = false, switcherActive: Bool = false) {
+    init(bindings: [HotkeyBinding] = [], useNativeCommandTab: Bool = false, switcherActive: Bool = false, appCommandsActive: Bool = false) {
+        self.appCommandsActive = appCommandsActive
         self.bindings = bindings
         self.useNativeCommandTab = useNativeCommandTab
         self.switcherActive = switcherActive
     }
 
     mutating func update(_ next: HotkeyCaptureSnapshot) {
+        appCommandsActive = next.appCommandsActive
         bindings = next.bindings
         useNativeCommandTab = next.useNativeCommandTab
         if !next.switcherActive { releasePending = false }
@@ -45,6 +48,7 @@ struct HotkeyCaptureSnapshot {
 
     mutating func captures(_ event: CGEvent) -> Bool {
         guard !ShortcutRecordingSession.isActive else { switcherActive = false; return false }
+        if appCommandsActive { return true }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
         if switcherActive {
@@ -159,6 +163,7 @@ final class HotkeyManager {
     private let store: PersistenceStore
     private let workspaceState: WorkspaceStateService
     private let switcher: SwitcherController
+    var appCommands: AppCommandsController?
     var onUserKeyDown: (() -> Void)?
     var onEscape: (() -> Bool)?
     private var inputTap: KeyboardInputTap?
@@ -212,7 +217,7 @@ final class HotkeyManager {
         let configuration = store.loadConfiguration()
         inputTap?.update(HotkeyCaptureSnapshot(bindings: configuration.hotkeys,
             useNativeCommandTab: configuration.useNativeCommandTab || workspaceState.shouldUseNativeSwitcherInFullScreen(),
-            switcherActive: switcher.isVisible))
+            switcherActive: switcher.isVisible, appCommandsActive: appCommands?.isVisible ?? false))
     }
 
     func stop() {
@@ -239,7 +244,11 @@ final class HotkeyManager {
             restoreEngine.focusNextWindowInStack(direction: 1)
         case .previousWindowInStack:
             restoreEngine.focusNextWindowInStack(direction: -1)
+        case .openAppCommands:
+            switcher.cancel()
+            appCommands?.show()
         case .openGlobalSwitcher:
+            appCommands?.close()
             switcher.show(mode: .allWindows, reverse: pendingSwitcherReverse)
             pendingSwitcherReverse = false
         case .openZoneSwitcher:
@@ -300,6 +309,11 @@ final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
 
+        if let appCommands, appCommands.isVisible {
+            appCommands.input(key: event.getIntegerValueField(.keyboardEventKeycode),
+                              text: NSEvent(cgEvent: event)?.characters, flags: event.flags)
+            return nil
+        }
         if event.getIntegerValueField(.keyboardEventKeycode) == 53, onEscape?() == true { return nil }
         guard let command = command(for: event) else {
             onUserKeyDown?()

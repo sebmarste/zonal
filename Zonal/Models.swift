@@ -1488,6 +1488,7 @@ struct SwitcherItem: Identifiable, Equatable {
     var zoneName: String
     var zoneFrame: NormalizedFrame?
     var isActive: Bool
+    var isFocused: Bool = false
     var isZonalUtility: Bool = false
 
     static func == (lhs: SwitcherItem, rhs: SwitcherItem) -> Bool {
@@ -1499,6 +1500,7 @@ struct SwitcherItem: Identifiable, Equatable {
             && lhs.zoneName == rhs.zoneName
             && lhs.zoneFrame == rhs.zoneFrame
             && lhs.isActive == rhs.isActive
+            && lhs.isFocused == rhs.isFocused
             && lhs.isZonalUtility == rhs.isZonalUtility
     }
 }
@@ -1544,6 +1546,7 @@ enum ZonalCommand {
     case previousWindowInStack
     case openGlobalSwitcher
     case openZoneSwitcher
+    case openAppCommands
     case switcherNext
     case switcherPrevious
     case switcherVerticalWindow(Int)
@@ -1622,6 +1625,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
     case previousWindowInStack
     case openGlobalSwitcher
     case openZoneSwitcher
+    case openAppCommands
     case restore
     case undo
 
@@ -1633,6 +1637,7 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
         case .nextWindowInStack: "Next Window in Zone"
         case .previousWindowInStack: "Previous Window in Zone"
         case .openGlobalSwitcher: SwitcherMode.allWindows.title
+        case .openAppCommands: "App Commands"
         case .openZoneSwitcher: SwitcherMode.byZone.title
         case .restore: "Restore Window Positions"
         case .undo: "Undo Last Window Action"
@@ -1653,6 +1658,8 @@ enum HotkeyCommand: Codable, Equatable, Hashable {
             return .previousWindowInStack
         case .openGlobalSwitcher:
             return .openGlobalSwitcher
+        case .openAppCommands:
+            return .openAppCommands
         case .openZoneSwitcher:
             return .openZoneSwitcher
         case .undo:

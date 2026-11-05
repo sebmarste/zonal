@@ -63,10 +63,19 @@ final class AppContainer: ObservableObject {
     private lazy var zoneTabs = ZoneTabController(
         snapshots: { [weak self] in self?.workspaceState.tabSnapshots() ?? [] },
         focus: { [weak self] id in self?.workspaceState.focusTab(assignmentID: id) },
-        performAction: { [weak self] id, action in self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
+        performAction: { [weak self] id, action in
+            guard let self else { return }
+            if action == .appCommands {
+                let context = self.workspaceState.currentProfileContext()
+                guard let assignment = context.assignments.first(where: { $0.id == id }),
+                      let window = self.windowRegistry.bestMatch(for: assignment, in: context.windows) else { return }
+                self.appCommands.show(expectedWindow: window.element)
+            } else { self.restoreEngine.performTabAction(assignmentID: id, action: action) }
+        },
         prepareDrag: { [weak self] id in self?.workspaceState.tabDragPlan(assignmentID: id) },
         isSuspended: { [weak self] in self?.restoreEngine.isTabPresentationSuspended ?? true }
     )
+    private lazy var appCommands = AppCommandsController()
     lazy var switcher = SwitcherController(workspaceState: workspaceState)
     private lazy var hotZoneOverlay = HotZoneOverlayController()
     private lazy var windowMovementObserver: WindowMovementObserver = {
@@ -157,6 +166,7 @@ final class AppContainer: ObservableObject {
             self?.restoreEngine.updateWindowAssignment(id, zoneID: zone, fitToZone: fit)
         }
         workspaceState.onFocusedWindowChanged = { [weak self] window in
+            self?.appCommands.focusedWindowChanged(window?.element)
             self?.activeWindowOutline.update(window: window)
             self?.hotkeys.refreshCaptureSnapshot()
             self?.zoneTabs.refresh()
@@ -216,6 +226,8 @@ final class AppContainer: ObservableObject {
         hotkeys.start()
         hotkeys.onUserKeyDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
         windowMovementObserver.onMouseDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
+        hotkeys.appCommands = appCommands
+        appCommands.onVisibilityChanged = { [weak self] in self?.hotkeys.refreshCaptureSnapshot() }
         hotkeys.onEscape = { [weak self] in self?.zoneTabs.interaction.cancel() ?? false }
         windowMovementObserver.onTabPointerEvent = { [weak self] type, point in self?.zoneTabs.interaction.pointer(type, at: point) ?? false }
         windowMovementObserver.isTabInteractionActive = { [weak self] in self?.zoneTabs.interaction.isActive ?? false }
@@ -252,6 +264,7 @@ final class AppContainer: ObservableObject {
         windowMovementObserver.stop()
         workspaceState.stop()
         activeWindowOutline.stop()
+        appCommands.close()
         zoneTabs.stop()
         windowController.onPlacementStarted = nil
         windowController.onPlacementSettled = nil
