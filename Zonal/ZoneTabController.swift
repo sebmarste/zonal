@@ -536,10 +536,10 @@ struct ZoneTabStripView: View {
 
     private var clock: some View {
         TimelineView(.everyMinute) { context in
-            ZoneTabClockLabel(date: context.date)
+            ZoneTabClockLabel(date: context.date, stacked: snapshot.edge.isVertical)
                 .fixedSize()
                 .padding(.horizontal, 6)
-                .frame(height: 24)
+                .frame(height: snapshot.edge.isVertical ? 36 : 24)
                 .help(context.date.formatted(date: .complete, time: .omitted))
         }
         .fixedSize()
@@ -661,6 +661,19 @@ struct ZoneTabStripView: View {
 
 struct ZoneTabClockLabel: NSViewRepresentable {
     var date: Date
+    var stacked = false
+
+    static func text(for date: Date, stacked: Bool = false,
+                     locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d")
+        let day = formatter.string(from: date)
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return day + (stacked ? "\n" : "  ") + formatter.string(from: date)
+    }
 
     func makeNSView(context: Context) -> NSTextField {
         let label = NSTextField(labelWithString: "")
@@ -671,8 +684,10 @@ struct ZoneTabClockLabel: NSViewRepresentable {
     }
 
     func updateNSView(_ label: NSTextField, context: Context) {
-        label.stringValue = date.formatted(date: .omitted, time: .shortened)
-        label.setAccessibilityLabel("Time")
+        label.maximumNumberOfLines = stacked ? 2 : 1
+        label.usesSingleLineMode = !stacked
+        label.stringValue = Self.text(for: date, stacked: stacked)
+        label.setAccessibilityLabel("Date and time")
         label.setAccessibilityValue(label.stringValue)
     }
 

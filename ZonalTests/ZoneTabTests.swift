@@ -1497,6 +1497,26 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
     }
 
+    func testClockIncludesLocalizedDateTimeAndRollsOverAtMidnight() throws {
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let locale = Locale(identifier: "en_US_POSIX")
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-05T23:59:00Z"))
+        let before = ZoneTabClockLabel.text(for: date, locale: locale, timeZone: utc)
+        XCTAssertTrue(before.contains("Thu"))
+        XCTAssertTrue(before.contains("Nov"))
+        XCTAssertTrue(before.contains("5"))
+        XCTAssertTrue(before.contains(":59"))
+        let after = ZoneTabClockLabel.text(for: date.addingTimeInterval(60), locale: locale, timeZone: utc)
+        XCTAssertTrue(after.contains("Fri"))
+        XCTAssertTrue(after.contains("6"))
+        XCTAssertTrue(after.contains(":00"))
+        let vertical = ZoneTabClockLabel.text(for: date, stacked: true, locale: locale, timeZone: utc)
+        XCTAssertEqual(vertical.components(separatedBy: "\n").count, 2)
+        let german = ZoneTabClockLabel.text(for: date, locale: Locale(identifier: "de_DE"), timeZone: utc)
+        XCTAssertTrue(german.contains("23:59"))
+        XCTAssertNotEqual(german, before)
+    }
+
     func testClockFitsInsideNarrowAndWideStripsOnEveryEdge() throws {
         func labels(in view: NSView) -> [NSTextField] {
             if let label = view as? NSTextField, label.accessibilityIdentifier() == "main-stack-clock" { return [label] }
@@ -1521,6 +1541,7 @@ final class ZoneTabTests: XCTestCase {
                 let label = try XCTUnwrap(labels(in: host).first)
                 XCTAssertEqual(labels(in: host).count, 1)
                 XCTAssertFalse(label.stringValue.isEmpty)
+                XCTAssertEqual(label.stringValue.contains("\n"), edge.isVertical)
                 XCTAssertFalse(panel.canBecomeKey)
                 let clockBounds = label.convert(label.bounds, to: host)
                 XCTAssertGreaterThan(clockBounds.width, 20)
