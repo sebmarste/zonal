@@ -34,3 +34,28 @@ and 19 Python tests. Coverage includes the actual settings merge/reopen path,
 per-profile switching of spacing/edge/labels/clock, compatibility fallback,
 fitted-state preservation and rejection of delayed captures from another profile.
 Live checkbox clicking and desktop compositing require separate visual acceptance.
+
+## Installed verification
+
+Source `17fa7fe133440ab95416a06c63bfb35e8aec076f` was built in Release for arm64 and
+x86_64 with Developer ID team `XW6G452649`. Apple accepted notarization submission
+`70b91dc8-7d96-4bfe-9bb9-e48a242c1e0d`; stapling, ticket verification, strict/deep
+signature verification and Gatekeeper all passed.
+
+Artifact `/private/tmp/zonal-profile-appearance/Zonal-profile-appearance-notarized.zip`
+has SHA-256 `d16adc3cb5dd21f6e2bc9c55244908980c7725e587dfd2837658035e5fedca9e`.
+Installed executable `/Applications/Zonal.app/Contents/MacOS/Zonal` on the MacBook
+has matching binary SHA-256
+`06295901577069f382b24094775b819149a4b28c7d16198378b23cc5933fc5a2`.
+At post-install verification one process (PID 95687) ran this exact path; all four
+health flags were true and all doctor findings were OK. Active profile remained UW.
+The bundle still reports 0.5.4 (76); distinguish feature builds by source/hash.
+
+The preceding clock-only app and configuration were preserved at
+`/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-appearance-lLVRqbbu`.
+Configuration bytes matched the backup after installation and startup. No saved
+custom placements were reset. The install includes the command implementation
+already present on this feature branch; native command interaction remains a
+separate live acceptance check. Visual checkbox/clock acceptance is pending user
+confirmation. Build, accepted notary submission, install and runtime evidence are
+retained under `/private/tmp/zonal-profile-appearance/`.
