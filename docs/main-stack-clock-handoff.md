@@ -80,3 +80,46 @@ Live GUI acceptance remains open: the focus probe retained the original target
 AX window but was not key; desktop capture failed with `cgWindowNotFound`.
 Native typing and transparent corners have not been observed. No release,
 main push, or merge was performed.
+
+## Clock installation completed, 2026-11-05
+
+The notarization profile is now stored in the explicit file-based login keychain:
+`ZONAL_NOTARY_KEYCHAIN=/Users/sebastianstein/Library/Keychains/login.keychain-db`,
+profile `zonal-release`. Pass that keychain path when using `notarytool`.
+Xcode 27.1's UI showed the signed-in account, but CLI export returned `No Accounts`
+even with `-allowProvisioningUpdates`; do not infer a missing UI login from that
+CLI failure. No Xcode account credentials were extracted.
+
+Apple accepted clock source `98b4512` under submission
+`39d24951-f033-441c-82f3-7d94f56f90ed`. The app was stapled and ticket validation,
+strict/deep Developer ID verification, hardened runtime/timestamp, both binary
+architectures, ZIP integrity and Gatekeeper (`Notarized Developer ID`) passed.
+The final install artifact is
+`/private/tmp/zonal-clock-98b4512/Zonal-clock-98b4512-notarized.zip`, SHA-256
+`66796e3f28ec1cfd9fe50b8dda59e0b9c320eb1d0c862563985652e1c9640518`.
+It supersedes the earlier unstapled ZIP. The accepted submission log, artifact
+metadata and install/post-install evidence remain in the same directory.
+
+Installed on the MacBook after successful graceful quit. Original app and
+configuration rollback:
+`/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-clock-oXnGh2Ja`.
+The configuration file matched the backup both immediately after replacement and
+after startup. No configuration was edited by deployment.
+
+Post-install checks verified `/Applications/Zonal.app` has the expected Developer
+ID team `XW6G452649`, stapled ticket, accepted Gatekeeper assessment, both arm64
+and x86_64 slices, and binary SHA-256
+`4c647d0ecf571e223d1d7b3689f0b739421dd7ed4733d194d311198439dafb30`, matching
+the Mini artifact. One process (PID 94306 at verification time) ran the exact
+installed executable `/Applications/Zonal.app/Contents/MacOS/Zonal`.
+Accessibility, Input Monitoring, keyboard capture and tracking all returned true;
+all doctor findings were OK. The internal bundle version remains 0.5.4 (76), so
+use the binary hash/source commit to distinguish this clock build from the public
+release with the same version.
+
+This installation contains the clock only. The app-command implementation is on
+`feature/main-stack-commands` at `80c8175`, tested and built as Developer ID Release
+for both architectures, but was not installed. Live clock/command visual acceptance
+and transparent-corner inspection remain unverified. The clock is off by default;
+enable General → Show clock in main stack tab bar to use it. No public release,
+main push or merge occurred.
