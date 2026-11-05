@@ -132,3 +132,26 @@ repair script `/private/tmp/zonal-exact-fit/repair-main.py` must use remote stag
 `REPAIR_STAGE`. It verifies a `.zoneFit` result, observed/desired frame agreement,
 and unchanged Screen Sharing profile placements. Do not retry an uncertain fit
 without reading the actual result. Native Frame/spacing acceptance remains open.
+
+## Date beside the clock
+
+Source `b7a98e1f4a14232cba4404c466003b45135f1f16` adds localized abbreviated
+weekday/month/day beside the system short time. Vertical tab bars stack the date
+above the time so both fit without changing window geometry. The clock remains
+non-clickable and updates each minute, including date rollover. Regression checks
+passed 381 XCTest tests (10 skipped, zero failures) and 19 Python tests. Narrow
+horizontal and vertical AppKit fixture renders were inspected; this is not live
+desktop acceptance.
+
+The universal Developer ID build was accepted under notarization submission
+`b3b7f2ea-69ec-4280-a52c-7c8a7b30615c` and installed with ticket, signature and
+Gatekeeper validation. Artifact `/private/tmp/zonal-clock-date/Zonal-clock-date-notarized.zip`
+has SHA-256 `d70cfb0ec3c7badc2ec1406566beb46eb5dd3e57a360d48b93f7a1fd0570183f`.
+The installed/running binary matches SHA-256
+`4eb71a79ea88ec744566e380fdea99d7f26c74d75b4922e2ef7031a9b7ada28d`;
+one process (PID 5455 at verification) ran the exact installed path. All four
+health flags were true, all doctor findings OK, and configuration bytes unchanged.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-clock-date-E86xLyAe`.
+Evidence remains under `/private/tmp/zonal-clock-date/evidence/`.
+The MacBook remained locked during this work. The pending exact main-browser Fit
+repair above has still not been issued; leave Screen Sharing placements unchanged.
