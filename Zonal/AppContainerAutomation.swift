@@ -160,6 +160,15 @@ extension AppContainer {
                 return failure("no_window_in_zone", "No previous window is available in the current zone")
             }
             return success("Previous window focus accepted", state: .accepted)
+        case .fitAssignment(let assignmentID):
+            let context = workspaceState.currentProfileContext()
+            guard let assignment = context.assignments.first(where: { $0.id == assignmentID }),
+                  assignment.managementMode == .managed,
+                  windowRegistry.bestMatch(for: assignment, in: context.windows) != nil else {
+                return failure("no_live_window", "No managed live window for assignment")
+            }
+            restoreEngine.performTabAction(assignmentID: assignmentID, action: .fit)
+            return success("Fit accepted for assignment", state: .accepted)
         case .focusAssignment(let assignmentID):
             let model = workspaceState.refreshSwitcherSnapshot(mode: .allWindows, resetSelection: true)
             guard let item = model.zones.flatMap(\.items).first(where: {

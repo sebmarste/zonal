@@ -179,6 +179,15 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(manager.currentSnapshot(), snapshot)
     }
 
+    func testExactAssignmentFitRejectsMissingAndInvalidIDs() {
+        let id = UUID()
+        XCTAssertEqual(LocalAutomationCommand(name: "fit-assignment", arguments: [id.uuidString]), .fitAssignment(id))
+        for arguments in [[], ["main"], ["not-a-uuid"]] {
+            XCTAssertEqual(LocalAutomationCommand(name: "fit-assignment", arguments: arguments),
+                           .invalid("fit-assignment requires an assignment UUID"))
+        }
+    }
+
     func testAutomationCommandParsingIsDeterministic() {
         let assignmentID = UUID()
 
