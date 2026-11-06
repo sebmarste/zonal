@@ -677,7 +677,7 @@ struct ZoneTabClockLabel: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSTextField {
         let label = NSTextField(labelWithString: "")
-        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.setAccessibilityIdentifier("main-stack-clock")
         return label
@@ -718,7 +718,7 @@ private struct ZoneTabButton: NSViewRepresentable {
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
         button.alignment = .left
         button.lineBreakMode = .byTruncatingTail
-        button.font = .systemFont(ofSize: 11, weight: .medium)
+        button.font = .systemFont(ofSize: 13, weight: .medium)
         button.imagePosition = .imageLeft
         button.imageScaling = .scaleNone
         return button
