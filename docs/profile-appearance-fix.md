@@ -167,3 +167,26 @@ on the active profile and fitting here would not repair the UW placement. Await
 reconnection of the ultrawide and confirmation that UW is the matched runtime
 profile before running the retained exact-target repair. Do not force UW geometry
 onto the built-in display or silently change Main's saved placement.
+
+## UW browser repair completed, 2026-11-06
+
+After the user reconnected the ultrawide, read-only checks confirmed an unlocked
+session, runtime profile `profile-2` (UW), and the exact original browser window
+`28943:cg:16470`, assignment `EA65EAFB-C4F1-4F7F-8CB9-24ACC9A39726`.
+The existing `fit-assignment` action was issued once for this assignment.
+
+The resulting saved placement is `.zoneFit(zoneID: main)`. Observed and desired
+frames both equal `[1336,36,2448,1366]`; a subsequent settled read still showed
+zone-fit intent and measured exactly 6 pt between this browser and each adjacent
+fitted zone. Both Screen Sharing assignments' per-profile placements were
+unchanged. All four runtime health flags remained true. Evidence is retained at
+`/private/tmp/zonal-exact-fit/evidence/live-fit-completed.log` and
+`live-fit-settled.log`; the targeted before/after snapshots are in the retained
+MacBook stage `upload.HjKv077u`.
+
+The user then confirmed: **“Frame and spacing look correct.”** This completes the
+UW main-browser fitting repair and adds live visual acceptance to the measured
+frame/spacing evidence. The earlier lock/display blockers are resolved; do not
+rerun the repair merely because earlier historical sections say it was pending.
+Screen Sharing windows remain custom-sized by design. No new app build or
+configuration rewrite was required for this final repair.
