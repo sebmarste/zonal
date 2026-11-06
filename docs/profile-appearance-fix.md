@@ -190,3 +190,19 @@ frame/spacing evidence. The earlier lock/display blockers are resolved; do not
 rerun the repair merely because earlier historical sections say it was pending.
 Screen Sharing windows remain custom-sized by design. No new app build or
 configuration rewrite was required for this final repair.
+
+## Larger tab text, 2026-11-06
+
+Source `1b516e764771cb64052f28357762367c9c8bcfa3` increases clock/date and window-tab
+labels from 11 pt to 13 pt. Bar dimensions remain unchanged; narrow horizontal and
+vertical fixture renders were inspected. Required checks passed 381 XCTest tests
+(10 skipped, zero failures) and 19 Python tests. No new tests were added for the
+two font-size changes; existing layout coverage exercised them.
+The universal Developer ID build was accepted under notarization submission
+`76bfdf0c-c12a-44f7-b2ed-e01f68fc2b20` and installed on the MacBook. Strict signature,
+ticket, Gatekeeper, matching binary hash and exact running executable passed;
+all health and doctor checks were green. Configuration bytes and UW browser's
+saved `.zoneFit(main)` placement were preserved. Evidence and artifact hashes:
+`/private/tmp/zonal-larger-tab-text/artifact.json` and `evidence/`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-larger-text-ZYXWhKD4`.
+Live desktop readability acceptance remains open.
