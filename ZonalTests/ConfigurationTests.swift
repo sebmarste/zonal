@@ -717,6 +717,8 @@ private final class CommandMenuFixture {
     let first = AXUIElementCreateApplication(910006)
     let second = AXUIElementCreateApplication(910007)
     var current = true
+    var windowCurrent = true
+    var focusedPIDs: [pid_t] = []
     var enabled = true
     var omitCategoryEnabled = false
     var replacement: AXUIElement?
@@ -724,8 +726,11 @@ private final class CommandMenuFixture {
     var outcome: AXError = .success
     var onPress: (() -> Void)?
     lazy var reader = AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
-        if name == kAXFocusedApplicationAttribute { return AXUIElementCreateApplication(self.current ? self.pid : 910099) }
-        if name == kAXFocusedWindowAttribute { return self.window }
+        if name == kAXFocusedApplicationAttribute {
+            let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
+            return AXUIElementCreateApplication(pid)
+        }
+        if name == kAXFocusedWindowAttribute { return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098) }
         if name == kAXMenuBarAttribute { return self.bar }
         if name == kAXChildrenAttribute {
             if CFEqual(element, self.bar) { return [self.file] as CFArray }
@@ -1127,5 +1132,97 @@ extension ConfigurationTests {
         XCTAssertEqual(closes, 1)
         XCTAssertEqual(fixture.presses.count, 1)
         XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.presses.first), fixture.second))
+    }
+}
+
+
+extension ConfigurationTests {
+    func testReadinessWaitAllowsMenuFocusButRejectsExternalAppOrSiblingWindow() {
+        let fixture = CommandMenuFixture()
+        let menuPID = ProcessInfo.processInfo.processIdentifier
+        fixture.focusedPIDs = [menuPID, menuPID, fixture.pid]
+        XCTAssertTrue(fixture.reader.waitForContext(transitionPID: menuPID))
+        XCTAssertTrue(fixture.presses.isEmpty)
+        fixture.current = false
+        XCTAssertFalse(fixture.reader.waitForContext(transitionPID: menuPID))
+        fixture.current = true
+        fixture.windowCurrent = false
+        XCTAssertFalse(fixture.reader.waitForContext(transitionPID: menuPID))
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    func testFocusPolicyAllowsOnlyExpectedOpeningTransitionAndOwnMenu() {
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 20, target: 20, opening: 10, preparing: false, menuOwnsFocus: false))
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 10, target: 20, opening: 10, preparing: true, menuOwnsFocus: false))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: 10, target: 20, opening: 10, preparing: false, menuOwnsFocus: false))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: 30, target: 20, opening: 10, preparing: true, menuOwnsFocus: false))
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 30, target: 20, opening: 10, preparing: false, menuOwnsFocus: true))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: nil, target: 20, opening: nil, preparing: true, menuOwnsFocus: false))
+    }
+
+    @MainActor
+    func testMenuSearchControlsCannotRequestKeyboardOrPanelFocus() {
+        let session = TabContextMenuSession(menu: NSMenu(), reader: nil)
+        XCTAssertFalse(session.search.acceptsFirstResponder)
+        XCTAssertFalse(session.search.needsPanelToBecomeKey)
+        XCTAssertTrue(session.search.acceptsFirstMouse(for: nil))
+        XCTAssertFalse(session.results.acceptsFirstResponder)
+        XCTAssertFalse(session.results.needsPanelToBecomeKey)
+        XCTAssertFalse(session.results.table.acceptsFirstResponder)
+        XCTAssertFalse(session.results.table.needsPanelToBecomeKey)
+        XCTAssertTrue(session.results.table.acceptsFirstMouse(for: nil))
+    }
+
+    @MainActor
+    func testBackgroundMenuFocusesExactContextBeforeReadingCommands() async {
+        let fixture = CommandMenuFixture()
+        fixture.current = false
+        fixture.windowCurrent = false
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var focusRequests = 0
+        session.focusBeforeRead = { completion in
+            focusRequests += 1
+            fixture.current = true
+            fixture.windowCurrent = true
+            completion()
+        }
+        let ready = expectation(description: "Verified focused menus")
+        session.prepare {
+            XCTAssertEqual(focusRequests, 1)
+            XCTAssertEqual(session.menu.items.compactMap { $0.submenu?.title }, ["File"])
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testUnconfirmedFocusNeverOpensMenuOrExecutesCommand() async {
+        let fixture = CommandMenuFixture()
+        fixture.current = false
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let failed = expectation(description: "Focus failure reported")
+        session.onPreparationFailure = { failed.fulfill() }
+        session.prepare { XCTFail("Unverified context presented") }
+        await fulfillment(of: [failed], timeout: 3)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testCancelledNativeFocusCannotLeaveMenuPreparingForever() async {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.preparationTimeoutDuration = .milliseconds(20)
+        session.focusBeforeRead = { _ in }
+        var cancellations = 0
+        session.cancelFocus = { cancellations += 1 }
+        let failed = expectation(description: "Unfinished focus times out")
+        session.onPreparationFailure = { failed.fulfill() }
+        session.prepare { XCTFail("Unverified context presented") }
+        await fulfillment(of: [failed], timeout: 3)
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertTrue(fixture.presses.isEmpty)
     }
 }

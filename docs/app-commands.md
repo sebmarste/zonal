@@ -17,13 +17,16 @@ visible selection and Return executes exactly that result. Escape clears a searc
 normal native-menu dismissal. Backspace edits the filter and Command-V pastes
 search text. Clicking the search clear button resets the filter. The existing
 keyboard tap handles search text because custom native-menu views do not receive
-normal menu typing; AppKit handles unfiltered navigation. Zonal never activates
-itself or makes another document key to obtain command context.
+normal menu typing; AppKit handles unfiltered navigation. Search controls cannot
+request keyboard or panel focus and prevent mouse-driven window ordering.
 
-Zonal actions always retain the clicked assignment. Application commands are
-available only when that exact clicked window is the active app's focused AX
-window. A background tab still offers its own Zonal actions and an explanatory
-app-command notice; it never silently targets another document.
+Zonal actions always retain the clicked assignment. Right-click explicitly
+focuses the exact clicked window before reading its application menus, including
+background windows. It uses the existing native focus executor once and verifies
+the app and AX window before discovery. A three-second preparation timeout covers
+cancelled native focus callbacks; failed verification cannot present commands.
+The initial source app/window is captured only to tolerate the expected opening
+transition. Unrelated app/window changes cancel preparation.
 
 AX categories are discovered before scanning descendants. Missing AXEnabled on a
 menu container does not disable all its children; commands still require explicit
@@ -55,8 +58,13 @@ Before one AXPress, execution revalidates the active app, original AX window,
 category/path, exact retained command element, enabled state (including parents),
 and shortcut. It closes the native menu before execution. Stale references and
 unconfirmed outcomes are reported; commands are never blindly retried. External
-app/window focus changes cancel menu tracking. Inventory reads tolerate transient
-system-menu AX focus; execution requires strict focus after the menu closes.
+app/window focus changes cancel menu tracking. A confirmed focus transition into
+our own menu host is tolerated only while its command context is retained; an
+ordinary Zonal key window does not count as that menu host. After dismissal,
+execution can return focus from Zonal's own menu to the captured window, then
+performs a bounded read-only readiness wait. It immediately rejects another app
+or sibling window and still requires strict focus before its one AXPress.
+Diagnostics record confirmed/unconfirmed execution, including the failure reason.
 
 `Zonal --automation app-menus` reads a bounded inventory of the currently active
 app, reporting category names and counts without executing commands. Diagnostics
@@ -126,18 +134,18 @@ Focus-change cancellation and other applications still lack separate live
 acceptance.
 
 
-## Non-focused window menus: proposed behavior
+## Right-click focus and command handoff
 
-Application menus and their enabled state reflect an app's current command
-context, not an arbitrary background document. The reliable extension is to
-focus the exact clicked window using Zonal's existing focus path, wait for
-verified app/window focus, then capture its menu snapshot. Execution would keep
-the existing final identity/enabled-state checks and no-retry behavior. This
-would make right-click focus that window and needs separate tests for same-app
-siblings, cross-app focus changes, focus failure and cancellation, plus live
-acceptance. It is proposed, not implemented in the appearance update.
+The user explicitly accepted focusing a window on right-click. This supersedes
+the earlier background-preview proposal. The implementation uses the exact
+captured AX element, not an enumerated sibling. It cancels older pending focus
+requests, makes one native focus request when needed, and verifies the result
+before reading menus. User input into a preparing menu is buffered without
+activating Zonal. External focus changes still cancel.
 
-A cached background preview could avoid focus at opening, but its commands and
-enabled state would be provisional. Selecting a command would still need focus,
-fresh discovery and revalidation. General commands that leave the window in the
-background are not guaranteed by the current AX menu path.
+The user also reported an “App Command Not Confirmed” alert after searching on
+the previously installed build. That identifies the execution/validation path;
+the precise alert body was not supplied. The update adds passive search controls,
+menu-host focus handling and a bounded focus-settling check. These are covered by
+deterministic fixtures; resolution of the reported live failure remains pending
+installation and user acceptance of the combined update.

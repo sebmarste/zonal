@@ -650,7 +650,7 @@ final class WindowController {
         }
     )
 
-    func focus(_ window: ManagedWindow, completion: (() -> Void)? = nil) {
+    func focus(_ window: ManagedWindow, completion: (@MainActor () -> Void)? = nil) {
         guard let pid = window.identity.processIdentifier else { completion?(); return }
         let token = UUID()
         let delivery = AXFocusCompletion { completion?() }
