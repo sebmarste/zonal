@@ -85,3 +85,28 @@ reported `categories=11 commands=252 complete=true`, with all doctor findings OK
 This confirms native sections, inline search and a harmless app command executing
 through the real context menu. Focus-change cancellation and other applications
 remain separately bounded by fixtures/source checks rather than live acceptance.
+
+
+## Menu stability update, 2026-11-08
+
+Source `18d778a30ffb410fe8afd44d09a3db5150abed67` removes updates during native
+tracking and the Apple/dynamic-items rows. Search uses an explicit selected row,
+skips disabled results, preserves menu height in both directions, and dispatches
+Return once to the selected handler. `./scripts/check` passed 392 XCTest tests
+(10 skipped, zero failures) and 19 Python tests.
+
+The universal Developer ID build was accepted under notarization submission
+`fb7a8a14-77fc-4c81-9bde-5cf792c82eee`. Its installed signature, staple,
+Gatekeeper assessment and executable hash were verified on the MacBook:
+`43c827cf529fddaf5bb6dd00ceb2cb4552fb71c0d8f21d805c8c9a1648005750`.
+Exactly one process ran `/Applications/Zonal.app/Contents/MacOS/Zonal`, including
+a matching mapped executable. All four health flags were true, every doctor
+finding was OK, and configuration matched the pre-install backup after startup.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-stable-menu-3RPppA6e`.
+Artifact/provenance and retained checks: `/private/tmp/zonal-stable-app-menu/`.
+
+Live interaction acceptance for this stability update is pending. The immediate
+post-install desktop inventory had zero tracked windows and returned
+`categories=0 complete=false`; that is not menu-availability or interaction
+success. The user has been asked to focus Ardia and check the upward menu,
+first-result selection, and Return dispatch on the installed build.
