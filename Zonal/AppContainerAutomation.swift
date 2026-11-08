@@ -8,7 +8,13 @@ extension AppContainer {
         guard automationServer == nil else { return }
         let server = LocalAutomationSocketServer { [weak self] request, reply in
             guard let self else { return }
-            reply(self.response(to: request))
+            if case .appMenus = LocalAutomationCommand(name: request.command, arguments: request.arguments) {
+                self.appCommands.inspectActiveMenus { diagnostics in
+                    reply(LocalAutomationResponse(apiVersion: LocalAutomationProtocol.currentVersion,
+                        requestID: request.id, command: request.command, ok: true, message: "App menu inventory read",
+                        result: LocalAutomationResult(state: .read, diagnostics: diagnostics), error: nil))
+                }
+            } else { reply(self.response(to: request)) }
         }
         do {
             try server.start()
@@ -52,6 +58,8 @@ extension AppContainer {
         switch LocalAutomationCommand(name: command, arguments: arguments) {
         case .read(let kind):
             return success("\(kind.rawValue.capitalized) read", result: automationReadResult(kind))
+        case .appMenus:
+            return success("App menu inventory read", result: LocalAutomationResult(state: .read, diagnostics: appCommands.lastInventory))
         case .diagnostics:
             return success(
                 "Diagnostics read",

@@ -1,42 +1,55 @@
-# Active application commands
+# Window context menu
 
-Configure an **App Commands** binding under Settings → Switching & Shortcuts →
-Add Shortcut. The focused window's tab also has **App Commands…** in its context
-menu. Other tab actions continue to target the clicked window.
+Right-click a window tab to use one native menu with three sections:
 
-The overlay captures the frontmost application's exact AX focused window at
-opening. It stays non-activating, receives typing through Zonal's existing input
-tap, and does not call `NSApp.activate` or make a Zonal window key. Arrow keys
-navigate nested menus; Return opens a submenu or executes a command. Typing
-searches full menu paths, with shortcuts displayed beside results. Escape clears
-search, returns to the parent, then closes. Left returns to the parent.
+1. Search.
+2. Zonal window actions (move, fit/restore custom size, close).
+3. The focused application's menu categories, such as Ardia, File, Edit and View.
 
-AX reads run on a serial queue with a 150 ms message timeout, 1.5 second scan
-budget, depth limit and node limit. Empty or unsupported menus produce a partial
-inventory notice. Explicit navigation can populate a lazy menu through AXShowMenu
-when the application supports it; Zonal never presses a menu item merely to
-populate it. Commands an app does not expose through AX remain available through
-its native menu bar. Search covers the currently exposed inventory; lazy menus
-may require explicit navigation first.
+When the menu opens upward, the section order is app categories, Zonal actions,
+then Search. Commands and category contents keep their usual order. The search
+section stays nearest the opening point. A configurable **App Commands** binding
+opens this same menu at the focused window's tab; there is no separate palette.
 
-Execution reads a fresh inventory and checks the original app/window, full path,
-exact retained AX item, shortcut and enabled state (including parent menus).
-A changed, replaced or unavailable item is rejected. Each execution sends one
-AXPress request. A timeout reports uncertainty and never triggers a retry.
-External application activation and focused-window changes close the overlay;
-a bounded background focus check also covers missing notifications.
+Type to filter both Zonal and app commands. App results show full menu paths and
+shortcuts. Arrow keys navigate native submenus. Return executes the highlighted
+search result (or first enabled result); Escape clears a search, then follows
+normal native-menu dismissal. Backspace edits the filter and Command-V pastes
+search text. Clicking the search clear button resets the filter. The existing
+keyboard tap handles search text because custom native-menu views do not receive
+normal menu typing; AppKit handles unfiltered navigation. Zonal never activates
+itself or makes another document key to obtain command context.
 
-## Validation boundary
+Zonal actions always retain the clicked assignment. Application commands are
+available only when that exact clicked window is the active app's focused AX
+window. A background tab still offers its own Zonal actions and an explanatory
+app-command notice; it never silently targets another document.
 
-Deterministic fixture tests cover duplicate labels, full-path token search,
-shortcut modifier rendering, shortcut persistence, keyboard capture, focus
-changes, disabled and replaced elements, and single-attempt timeout behavior.
-They do not require Accessibility permission.
+AX categories are discovered before scanning descendants. Missing AXEnabled on a
+menu container does not disable all its children; commands still require explicit
+enabled state. Reads use a 150 ms message timeout, bounded depth/node counts and
+1.5 second budgets. Categories index incrementally and refresh their children
+when opened. Search results fill as indexing progresses. Applications that do not
+expose a dynamic submenu through AX show an unavailable-menu notice; Zonal does
+not press a command to force its submenu to populate.
 
-Live keyboard routing, dynamic menus across real applications, and transparent
-corner/shadow compositing still require acceptance on a usable desktop. The Mini
-focus prototype preserved the target AX window but did not become key, and
-Computer Use desktop capture failed with `cgWindowNotFound`. The implementation
-therefore uses the existing non-activating input-tap architecture; this is not
-proof of successful live interaction. Do not present these deterministic tests
-as live acceptance or an installed-app check.
+Before one AXPress, execution revalidates the active app, original AX window,
+category/path, exact retained command element, enabled state (including parents),
+and shortcut. It closes the native menu before execution. Stale references and
+unconfirmed outcomes are reported; commands are never blindly retried. External
+app/window focus changes cancel menu tracking. Inventory reads tolerate transient
+system-menu AX focus; execution requires strict focus after the menu closes.
+
+`Zonal --automation app-menus` reads a bounded inventory of the currently active
+app, reporting category names and counts without executing commands. Diagnostics
+also retain the most recent menu inventory summary.
+
+## Validation
+
+Deterministic fixtures cover section reversal without reversing contents, native
+submenus, full-path search, preserved Zonal actions, missing container AXEnabled,
+command enabled state, exact duplicate identities, stale/replaced references,
+focus changes, shortcut modifiers and timeout/no-retry behavior. They do not need
+live Accessibility permissions. Native app menu availability, search interaction,
+arrow navigation and actual command execution need separate live acceptance on
+the installed MacBook build.

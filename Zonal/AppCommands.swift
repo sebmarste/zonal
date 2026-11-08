@@ -1,6 +1,5 @@
 import AppKit
 import ApplicationServices
-import SwiftUI
 
 // Paths include sibling positions and titles: duplicate labels never select each other.
 struct AppCommandPath: Equatable, Sendable {
@@ -56,73 +55,79 @@ final class AppCommandReader: @unchecked Sendable {
               let focused = attribute(app, kAXFocusedWindowAttribute) else { return false }
         return CFEqual(focused, window)
     }
-    func read() -> ([AppCommandNode], Bool) {
+    func windowContextMatches() -> Bool? {
+        guard let focused = attribute(app, kAXFocusedWindowAttribute) else { return nil }
+        return CFEqual(focused, window)
+    }
+    func read(category: AppCommandNode? = nil, categoriesOnly: Bool = false) -> ([AppCommandNode], Bool) {
         let deadline = Date().addingTimeInterval(1.5)
+        var branchDeadline = deadline
         var count = 0
         var complete = true
-        func descend(_ parent: AXUIElement, path: AppCommandPath, depth: Int, ancestorsEnabled: Bool = true) -> [AppCommandNode] {
-            guard depth < 12, count < 1500, Date() < deadline else { complete = false; return [] }
+        func descend(_ parent: AXUIElement, path: AppCommandPath, depth: Int, ancestorsEnabled: Bool = true, recursive: Bool = true) -> [AppCommandNode] {
+            guard depth < 12, count < 1500, Date() < branchDeadline else { complete = false; return [] }
             guard let children = attribute(parent, kAXChildrenAttribute) as? [AXUIElement] else { complete = false; return [] }
             var result: [AppCommandNode] = []
             for (index, child) in children.enumerated() {
-                guard count < 1500, Date() < deadline else { complete = false; break }
+                guard count < 1500, Date() < branchDeadline else { complete = false; break }
                 count += 1
                 let role = attribute(child, kAXRoleAttribute) as? String
                 if role == kAXMenuRole {
-                    result += descend(child, path: path, depth: depth + 1, ancestorsEnabled: ancestorsEnabled)
+                    result += descend(child, path: path, depth: depth + 1, ancestorsEnabled: ancestorsEnabled, recursive: recursive)
                     continue
                 }
                 guard let title = attribute(child, kAXTitleAttribute) as? String, !title.isEmpty else { continue }
                 let next = AppCommandPath(indices: path.indices + [index], titles: path.titles + [title])
                 let submenus = (attribute(child, kAXChildrenAttribute) as? [AXUIElement]) ?? []
                 let menu = role == kAXMenuBarItemRole || submenus.contains { attribute($0, kAXRoleAttribute) as? String == kAXMenuRole }
-                let enabled = ancestorsEnabled && (attribute(child, kAXEnabledAttribute) as? Bool ?? false)
+                let enabled = ancestorsEnabled && (attribute(child, kAXEnabledAttribute) as? Bool ?? menu)
                 let character = attribute(child, kAXMenuItemCmdCharAttribute) as? String ?? ""
                 let glyph = (attribute(child, kAXMenuItemCmdGlyphAttribute) as? NSNumber)?.intValue ?? 0
                 let mods = (attribute(child, kAXMenuItemCmdModifiersAttribute) as? NSNumber)?.intValue ?? 0
                 let key = character.isEmpty ? Self.glyph(glyph) : character.uppercased()
                 let shortcut = key.isEmpty ? "" : ((mods & 4 != 0 ? "⌃" : "") + (mods & 2 != 0 ? "⌥" : "") + (mods & 1 != 0 ? "⇧" : "") + (mods & 8 == 0 ? "⌘" : "") + key)
-                let nested = menu ? descend(child, path: next, depth: depth + 1, ancestorsEnabled: enabled) : []
-                if menu && nested.isEmpty { complete = false }
+                let nested = menu && recursive ? descend(child, path: next, depth: depth + 1, ancestorsEnabled: enabled) : []
+                if menu && recursive && nested.isEmpty { complete = false }
                 result.append(AppCommandNode(path: next, element: child, enabled: enabled,
                                              shortcut: shortcut, children: nested, isMenu: menu))
             }
             return result
         }
-        guard contextIsCurrent(), let bar = attribute(app, kAXMenuBarAttribute), CFGetTypeID(bar) == AXUIElementGetTypeID() else { return ([], false) }
-        let nodes = descend(bar as! AXUIElement, path: AppCommandPath(indices: [], titles: []), depth: 0)
-        return (nodes, complete)
-    }
-    func expand(_ node: AppCommandNode) -> ([AppCommandNode], Bool) {
-        guard contextIsCurrent() else { return ([], false) }
-        // Populate lazy menus only on explicit navigation, using the non-command ShowMenu action.
-        // Apps without this action keep their native menu as the fallback; never press a guessed item.
-        var actions: CFArray?
-        if node.children.isEmpty,
-           AXUIElementCopyActionNames(node.element, &actions) == .success,
-           (actions as? [String])?.contains(kAXShowMenuAction) == true {
-            guard AXUIElementPerformAction(node.element, kAXShowMenuAction as CFString) == .success else { return ([], false) }
-            let snapshot = read()
-            if let menu = (attribute(node.element, kAXChildrenAttribute) as? [AXUIElement])?.first(where: {
-                attribute($0, kAXRoleAttribute) as? String == kAXMenuRole
-            }) {
-                _ = AXUIElementPerformAction(menu, kAXCancelAction as CFString)
-            }
-            return snapshot
+        // A native context menu may temporarily own system AX focus. Inventory reads use
+        // the captured app's window; execution still requires strict system focus after closing.
+        guard windowContextMatches() != false else { return ([], false) }
+        if let category {
+            return (descend(category.element, path: category.path, depth: 0, ancestorsEnabled: category.enabled), complete)
         }
-        return read()
+        guard let bar = attribute(app, kAXMenuBarAttribute), CFGetTypeID(bar) == AXUIElementGetTypeID() else { return ([], false) }
+        var nodes = descend(bar as! AXUIElement, path: AppCommandPath(indices: [], titles: []), depth: 0, recursive: false)
+        if categoriesOnly { return (nodes, complete) }
+        // Discover every category before spending time in any one category's descendants.
+        for index in nodes.indices where nodes[index].isMenu {
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            branchDeadline = Date().addingTimeInterval(remaining / Double(nodes.count - index))
+            nodes[index].children = descend(nodes[index].element, path: nodes[index].path, depth: 1, ancestorsEnabled: nodes[index].enabled)
+        }
+        return (nodes, complete)
     }
     static func glyph(_ value: Int) -> String {
         [9: "⇥", 10: "⇤", 11: "↩", 23: "⌫", 27: "⎋", 28: "←", 29: "→", 30: "↑", 31: "↓", 98: "⇞", 99: "⇟", 115: "↖", 119: "↘" ][value] ?? (value == 0 ? "" : "[key \(value)]")
     }
     func execute(_ node: AppCommandNode) -> String? {
-        guard contextIsCurrent() else { return "The focused window changed. Reopen App Commands." }
-        let (roots, _) = read()
-        let matches = roots.flatMap { [$0] + $0.descendants }.filter { $0.path == node.path }
+        guard contextIsCurrent() else { return "The focused window changed. Reopen the window menu." }
+        let (roots, _) = read(categoriesOnly: true)
+        let categories = roots.filter {
+            $0.path.indices.first == node.path.indices.first && $0.path.titles.first == node.path.titles.first
+        }
+        guard categories.count == 1, let category = categories.first else {
+            return "This menu changed. Reopen the window menu."
+        }
+        let freshNodes = category.isMenu ? read(category: category).0 : [category]
+        let matches = freshNodes.flatMap { [$0] + $0.descendants }.filter { $0.path == node.path }
         guard matches.count == 1, let fresh = matches.first,
               CFEqual(fresh.element, node.element), fresh.enabled, !fresh.isMenu,
               fresh.shortcut == node.shortcut, contextIsCurrent() else {
-            return "This command changed or is unavailable. Reopen App Commands."
+            return "This command changed or is unavailable. Reopen the window menu."
         }
         // A timeout may mean the action ran. Issue exactly one press, never retry.
         let result = press(fresh.element)
@@ -130,163 +135,342 @@ final class AppCommandReader: @unchecked Sendable {
     }
 }
 
-@MainActor
-final class AppCommandsController: ObservableObject {
-    @Published private var roots: [AppCommandNode] = []
-    @Published private var ancestors: [AppCommandNode] = []
-    @Published private var query = ""
-    @Published private var selection = 0
-    @Published private var status = ""
-    private var reader: AppCommandReader?
-    private var pid: pid_t = 0
-    private var generation = UUID()
-    private var timer: Timer?
-    private var panel: NSPanel?
-    private var busy = false
-    private var checkingFocus = false
-    private var activationObserver: NSObjectProtocol?
-    var onVisibilityChanged: (() -> Void)?
-    var isVisible: Bool { panel?.isVisible == true }
-    private var rows: [AppCommandNode] {
-        if query.isEmpty { return ancestors.last?.children ?? roots }
-        return roots.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu && $0.path.matches(query) }
+struct TabContextMenuPolicy {
+    enum Section: CaseIterable, Hashable { case search, zonal, app }
+    static func sections(opensUpward: Bool) -> [Section] {
+        opensUpward ? [.app, .zonal, .search] : [.search, .zonal, .app]
     }
-    func show(expectedWindow: AXUIElement? = nil) {
-        close()
-        guard let active = NSWorkspace.shared.frontmostApplication,
-              active.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-        let app = AXUIElementCreateApplication(active.processIdentifier)
-        AXUIElementSetMessagingTimeout(app, 0.15)
-        guard let focused = commandAttribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID(),
-              expectedWindow.map({ CFEqual($0, focused) }) ?? true else { return }
-        pid = active.processIdentifier
-        reader = AppCommandReader(pid: pid, window: focused as! AXUIElement)
-        roots = []; ancestors = []; query = ""; selection = 0; status = "Reading \(active.localizedName ?? "app") menus…"
-        let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 660, height: 480),
-                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
-        window.level = .popUpMenu
-        window.contentView = NSHostingView(rootView: AppCommandsView(controller: self))
-        window.center(); window.orderFrontRegardless(); panel = window
-        onVisibilityChanged?()
-        refresh()
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier != self.pid { self.close() }
-            }
-        }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.isVisible else { return }
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier != self.pid { self.close(); return }
-                self.verifyFocus()
-            }
-        }
-    }
-    private func verifyFocus() {
-        guard let reader, !busy, !checkingFocus else { return }
-        checkingFocus = true
-        let token = generation
-        reader.queue.async { [weak self] in
-            let valid = reader.contextIsCurrent()
-            DispatchQueue.main.async { guard let self, self.generation == token else { return }; self.checkingFocus = false; if !valid { self.close() } }
-        }
-    }
-    func focusedWindowChanged(_ window: AXUIElement?) {
-        guard isVisible, let reader else { return }
-        guard let window, CFEqual(window, reader.window) else { close(); return }
-    }
-    func close() {
-        generation = UUID(); timer?.invalidate(); timer = nil
-        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
-        activationObserver = nil; checkingFocus = false
-        panel?.orderOut(nil); panel = nil; reader = nil; busy = false
-        onVisibilityChanged?()
-    }
-    private func refresh(expanding node: AppCommandNode? = nil) {
-        guard let reader, !busy else { return }
-        busy = true
-        let token = generation
-        reader.queue.async { [weak self] in
-            let (nodes, complete) = node.map { reader.expand($0) } ?? reader.read()
-            DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.busy = false; self.roots = nodes
-                self.status = complete ? "Type to search · ↑↓ select · →/Return open · ←/Escape back" : "Some menus are unavailable or lazy. Open them in the app, then reopen App Commands."
-                if !self.ancestors.isEmpty {
-                    let path = self.ancestors.last!.path
-                    if let fresh = nodes.flatMap({ [$0] + $0.descendants }).first(where: { $0.path == path }) { self.ancestors[self.ancestors.count - 1] = fresh }
-                }
-                self.selection = 0
-            }
-        }
-    }
-    func input(key: Int64, text: String?, flags: CGEventFlags) {
-        guard isVisible else { return }
-        switch key {
-        case 53:
-            if !query.isEmpty { query = ""; selection = 0 }
-            else if !ancestors.isEmpty { ancestors.removeLast(); selection = 0 }
-            else { close() }
-        case 125: selection = min(max(0, rows.count - 1), selection + 1)
-        case 126: selection = max(0, selection - 1)
-        case 123: if query.isEmpty, !ancestors.isEmpty { ancestors.removeLast(); selection = 0 }
-        case 124: if query.isEmpty, rows.indices.contains(selection), rows[selection].isMenu { choose(rows[selection]) }
-        case 36, 76: if rows.indices.contains(selection) { choose(rows[selection]) }
-        case 51, 117: if !query.isEmpty { query.removeLast(); selection = 0 }
-        default:
-            if !flags.contains(.maskCommand), !flags.contains(.maskControl), let text,
-               let accepted = SwitcherTextInputPolicy().acceptedText(text) { query += accepted; selection = 0 }
-        }
-    }
-    private func choose(_ node: AppCommandNode) {
-        guard !busy, node.enabled, NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
-        if node.isMenu { ancestors.append(node); selection = 0; refresh(expanding: node); return }
-        guard let reader else { return }
-        busy = true
-        let token = generation
-        // Stop consuming keys and release the overlay before performing an app action.
-        panel?.orderOut(nil); onVisibilityChanged?()
-        reader.queue.async { [weak self] in
-            let error = reader.execute(node)
-            DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.close()
-                if let error { let alert = NSAlert(); alert.messageText = "App Command Not Confirmed"; alert.informativeText = error; alert.runModal() }
-            }
-        }
-    }
-    fileprivate var content: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(ancestors.last?.path.display ?? "App Commands").font(.headline)
-            Text(query.isEmpty ? "Type to search commands…" : query).frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        ForEach(Array(self.rows.enumerated()), id: \.element.id) { index, node in
-                            Button { self.choose(node) } label: {
-                                HStack {
-                                    Text(self.query.isEmpty ? node.title : node.path.display).lineLimit(2)
-                                    Spacer(); Text(node.shortcut).foregroundStyle(.secondary)
-                                    if node.isMenu { Image(systemName: "chevron.right") }
-                                }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(index == self.selection ? Color.accentColor.opacity(0.22) : .clear, in: RoundedRectangle(cornerRadius: 6))
-                            }.buttonStyle(.plain).disabled(!node.enabled || self.busy).id(index)
-                        }
-                    }
-                }.onChange(of: self.selection) { _, value in proxy.scrollTo(value) }
-            }
-            Text(status).font(.caption).foregroundStyle(.secondary)
-        }.padding(20).frame(width: 620, height: 440)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.15)))
-            .shadow(color: .black.opacity(0.3), radius: 8, y: 3).padding(20)
+    static func opensUpward(at point: CGPoint, visibleFrame: CGRect, menuHeight: CGFloat) -> Bool {
+        let below = point.y - visibleFrame.minY
+        let above = visibleFrame.maxY - point.y
+        return below < menuHeight && above > below
     }
 }
 
-private struct AppCommandsView: View {
-    @ObservedObject var controller: AppCommandsController
-    var body: some View { controller.content }
+// Native custom menu views do not receive normal menu typing. Keep text filtering
+// on the existing input tap; AppKit retains arrows, Return, Escape and submenus.
+final class TabMenuSearchField: NSSearchField {
+    var clear: (() -> Void)?
+    override var acceptsFirstResponder: Bool { false }
+    override func mouseDown(with event: NSEvent) {
+        NSApp.preventWindowOrdering()
+        if convert(event.locationInWindow, from: nil).x > bounds.maxX - 24 { clear?() }
+    }
+}
+
+@MainActor
+final class TabContextMenuSession: NSObject, NSMenuDelegate {
+    let menu: NSMenu
+    let reader: AppCommandReader?
+    let zonalItems: [NSMenuItem]
+    let search = TabMenuSearchField(frame: NSRect(x: 12, y: 8, width: 296, height: 26))
+    private let searchItem = NSMenuItem()
+    private var nodes: [AppCommandNode] = []
+    private var submenuNodes: [ObjectIdentifier: AppCommandNode] = [:]
+    private var submenuObjects: [NSMenu] = []
+    private var complete = false
+    private var indexing = false
+    private var loading = false
+    private var closed = false
+    var opensUpward = false
+    private(set) var query = ""
+    var onOpen: (() -> Void)?
+    var onClose: (() -> Void)?
+    var onInventory: ((String) -> Void)?
+    var onQueryChanged: (() -> Void)?
+    private(set) var unavailableReason: String
+
+    init(menu: NSMenu, reader: AppCommandReader?, unavailableReason: String = "App commands require the focused window") {
+        self.menu = menu
+        self.reader = reader
+        self.unavailableReason = unavailableReason
+        zonalItems = menu.items.filter { !$0.isSeparatorItem }
+        super.init()
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        menu.minimumWidth = 320
+        menu.delegate = self
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 42))
+        search.placeholderString = "Search commands…"
+        search.setAccessibilityLabel("Search commands — type to filter")
+        search.clear = { [weak self] in self?.setQuery("") }
+        view.addSubview(search)
+        searchItem.view = view
+        rebuild()
+    }
+
+    private func info(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+    private func matches(_ title: String) -> Bool {
+        AppCommandPath(indices: [], titles: [title]).matches(query)
+    }
+    func setQuery(_ value: String) {
+        guard !closed else { return }
+        query = value
+        search.stringValue = value
+        rebuild()
+        onQueryChanged?()
+    }
+    func setNodes(_ value: [AppCommandNode], complete: Bool) {
+        guard !closed else { return }
+        nodes = value
+        self.complete = complete
+        loading = false
+        onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
+        rebuild()
+    }
+    func rebuild() {
+        menu.removeAllItems()
+        submenuNodes.removeAll(); submenuObjects.removeAll()
+        let zonal = query.isEmpty ? zonalItems : zonalItems.filter { matches($0.title) }
+        var app: [NSMenuItem] = []
+        if query.isEmpty {
+            app = nodes.map { item(for: $0, fullPath: false) }
+            if reader == nil { app = [info(unavailableReason)] }
+            else if app.isEmpty { app = [info(loading ? "Reading app menus…" : "App did not expose any menus")] }
+            if !complete, !nodes.isEmpty { app.append(info("Some dynamic menus may be unavailable")) }
+        } else {
+            app = nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu && matches($0.path.display + " " + $0.shortcut) }
+                .map { item(for: $0, fullPath: true) }
+            if app.isEmpty { app = [info(loading || indexing ? "Reading app menus…" : "No matching app commands")] }
+        }
+        let sections: [TabContextMenuPolicy.Section: [NSMenuItem]] = [
+            .search: [searchItem],
+            .zonal: zonal.isEmpty ? [info("No matching Zonal commands")] : zonal,
+            .app: app
+        ]
+        for section in TabContextMenuPolicy.sections(opensUpward: opensUpward) {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            for item in sections[section] ?? [] { menu.addItem(item) }
+        }
+        menu.update()
+    }
+    private func item(for node: AppCommandNode, fullPath: Bool) -> NSMenuItem {
+        let title = (fullPath ? node.path.display : node.title) + (node.shortcut.isEmpty ? "" : "    " + node.shortcut)
+        let reader = self.reader
+        let root = menu
+        let item = ZoneTabMenuItem(title: title) { [weak root] in
+            guard let reader, !node.isMenu, node.enabled else { return }
+            root?.cancelTracking()
+            DispatchQueue.main.async {
+                reader.queue.async {
+                    let error = reader.execute(node)
+                    if let error {
+                        Self.deliver {
+                            let alert = NSAlert()
+                            alert.messageText = "App Command Not Confirmed"
+                            alert.informativeText = error
+                            alert.runModal()
+                        }
+                    }
+                }
+            }
+        }
+        item.isEnabled = node.enabled
+        if node.isMenu {
+            let submenu = NSMenu(title: node.title)
+            submenu.autoenablesItems = false
+            submenu.delegate = self
+            submenuNodes[ObjectIdentifier(submenu)] = node
+            submenuObjects.append(submenu)
+            for child in node.children { submenu.addItem(self.item(for: child, fullPath: false)) }
+            if submenu.items.isEmpty { submenu.addItem(info("Reading menu…")) }
+            item.submenu = submenu
+        }
+        return item
+    }
+    nonisolated static func deliver(_ body: @escaping @MainActor @Sendable () -> Void) {
+        CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+            MainActor.assumeIsolated { body() }
+        }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+    func menuWillOpen(_ menu: NSMenu) {
+        if menu === self.menu {
+            closed = false
+            onOpen?()
+            guard let reader else { return }
+            loading = true
+            rebuild()
+            reader.queue.async { [weak self] in
+                let (nodes, complete) = reader.read()
+                Self.deliver {
+                    guard let self, !self.closed else { return }
+                    self.setNodes(nodes, complete: complete)
+                    self.indexing = true
+                    self.indexCategories(nodes, complete: true)
+                }
+            }
+        } else if let node = submenuNodes[ObjectIdentifier(menu)], let reader {
+            let menuID = ObjectIdentifier(menu)
+            reader.queue.async { [weak self] in
+                let (children, complete) = reader.read(category: node)
+                Self.deliver {
+                    guard let self, !self.closed,
+                          let menu = self.submenuObjects.first(where: { ObjectIdentifier($0) == menuID }) else { return }
+                    menu.removeAllItems()
+                    for child in children { menu.addItem(self.item(for: child, fullPath: false)) }
+                    if children.isEmpty { menu.addItem(self.info(complete ? "No commands" : "App did not expose this menu")) }
+                    menu.update()
+                    self.replaceChildren(children, at: node.path)
+                }
+            }
+        }
+    }
+    private func indexCategories(_ remaining: [AppCommandNode], complete: Bool) {
+        guard !closed, let reader else { return }
+        guard let node = remaining.first else {
+            indexing = false
+            self.complete = complete
+            onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
+            if !query.isEmpty { rebuild() }
+            return
+        }
+        guard node.isMenu else { indexCategories(Array(remaining.dropFirst()), complete: complete); return }
+        reader.queue.async { [weak self] in
+            let (children, categoryComplete) = reader.read(category: node)
+            Self.deliver {
+                guard let self, !self.closed else { return }
+                self.replaceChildren(children, at: node.path)
+                if !self.query.isEmpty { self.rebuild() }
+                self.indexCategories(Array(remaining.dropFirst()), complete: complete && categoryComplete)
+            }
+        }
+    }
+    private func replaceChildren(_ children: [AppCommandNode], at path: AppCommandPath) {
+        func replace(_ node: AppCommandNode) -> AppCommandNode {
+            var copy = node
+            copy.children = node.path == path ? children : node.children.map(replace)
+            return copy
+        }
+        nodes = nodes.map(replace)
+    }
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === self.menu { closed = true; onClose?() }
+    }
+    func cancel() { closed = true; menu.cancelTracking() }
+    func input(key: Int64, text: String?, flags: CGEventFlags) {
+        if key == 53 { setQuery(""); return }
+        if [36, 76].contains(key), !query.isEmpty {
+            let highlighted = menu.highlightedItem
+            guard let item = (highlighted?.isEnabled == true && highlighted?.action != nil && highlighted?.submenu == nil ? highlighted : nil)
+                ?? menu.items.first(where: { $0.isEnabled && $0.action != nil && $0.submenu == nil }),
+                let action = item.action else { return }
+            menu.cancelTracking()
+            DispatchQueue.main.async { NSApp.sendAction(action, to: item.target, from: item) }
+        } else if [51, 117].contains(key) {
+            if flags.contains(.maskCommand) { setQuery("") }
+            else if !query.isEmpty { setQuery(String(query.dropLast())) }
+        } else if key == 9, flags.contains(.maskCommand) {
+            if let value = NSPasteboard.general.string(forType: .string) { setQuery(query + value) }
+        } else if !flags.contains(.maskCommand), !flags.contains(.maskControl), let text,
+                  let value = SwitcherTextInputPolicy().acceptedText(text) {
+            setQuery(query + value)
+        }
+    }
+}
+
+@MainActor
+final class AppCommandsController {
+    private var session: TabContextMenuSession?
+    private var pid: pid_t?
+    private var timer: Timer?
+    private var checkingFocus = false
+    private var activationObserver: NSObjectProtocol?
+    private(set) var isVisible = false
+    private(set) var lastInventory = "App menus have not been opened"
+    var isFiltering: Bool { session?.query.isEmpty == false }
+    var onVisibilityChanged: (() -> Void)?
+    var openFocusedTabMenu: (() -> Bool)?
+
+    func inspectActiveMenus(_ completion: @escaping @MainActor @Sendable (String) -> Void) {
+        guard let active = NSWorkspace.shared.frontmostApplication else { completion("No active app"); return }
+        let app = AXUIElementCreateApplication(active.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        guard let focused = commandAttribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            completion("Active app has no readable focused window"); return
+        }
+        let reader = AppCommandReader(pid: active.processIdentifier, window: focused as! AXUIElement)
+        reader.queue.async { [weak self] in
+            let (nodes, complete) = reader.read()
+            let summary = "categories=\(nodes.count) complete=\(complete)\n" + nodes.map {
+                "\($0.title): commands=\($0.descendants.filter { !$0.isMenu }.count) enabled=\($0.enabled)"
+            }.joined(separator: "\n")
+            TabContextMenuSession.deliver {
+                self?.lastInventory = summary
+                completion(summary)
+            }
+        }
+    }
+    func show() { TabContextMenuSession.deliver { [weak self] in _ = self?.openFocusedTabMenu?() } }
+    func configure(_ menu: NSMenu, expectedWindow: AXUIElement) {
+        close()
+        var targetPID: pid_t = 0
+        AXUIElementGetPid(expectedWindow, &targetPID)
+        let active = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let app = AXUIElementCreateApplication(targetPID)
+        AXUIElementSetMessagingTimeout(app, 0.15)
+        let focused = commandAttribute(app, kAXFocusedWindowAttribute)
+        let valid = active == targetPID && focused.map { CFEqual($0, expectedWindow) } == true
+        lastInventory = valid ? "Reading app menus" : "Context unavailable: activePID=\(active ?? 0) targetPID=\(targetPID) focusedWindow=\(focused != nil)"
+        let reader = valid ? AppCommandReader(pid: targetPID, window: expectedWindow) : nil
+        let session = TabContextMenuSession(menu: menu, reader: reader)
+        self.session = session
+        pid = targetPID
+        session.onOpen = { [weak self, weak session] in
+            guard let self, let session, self.session === session else { return }
+            self.isVisible = true; self.onVisibilityChanged?()
+            self.startWatching()
+        }
+        session.onClose = { [weak self, weak session] in
+            guard let self, self.session === session else { return }
+            self.close()
+        }
+        session.onInventory = { [weak self] in self?.lastInventory = $0 }
+        session.onQueryChanged = { [weak self] in self?.onVisibilityChanged?() }
+    }
+    private func startWatching() {
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isVisible else { return }
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier != self.pid { self.close() }
+            }
+        }
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.verifyFocus() }
+        }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+    private func verifyFocus() {
+        guard isVisible, let session, let reader = session.reader, !checkingFocus else { return }
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid { close(); return }
+        checkingFocus = true
+        reader.queue.async { [weak self, weak session] in
+            let matches = reader.windowContextMatches()
+            TabContextMenuSession.deliver {
+                guard let self, self.session === session else { return }
+                self.checkingFocus = false
+                if matches == false { self.close() }
+            }
+        }
+    }
+    func focusedWindowChanged(_ window: AXUIElement?) {
+        guard isVisible, let reader = session?.reader, let window else { return }
+        if !CFEqual(window, reader.window) { close() }
+    }
+    func close() {
+        let current = session
+        session = nil
+        isVisible = false
+        timer?.invalidate(); timer = nil
+        if let activationObserver { NSWorkspace.shared.notificationCenter.removeObserver(activationObserver) }
+        activationObserver = nil; checkingFocus = false
+        current?.cancel()
+        onVisibilityChanged?()
+    }
+    func input(key: Int64, text: String?, flags: CGEventFlags) { session?.input(key: key, text: text, flags: flags) }
 }

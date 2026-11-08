@@ -203,6 +203,7 @@ final class ZoneTabController: NSObject {
     private let snapshots: () -> [ZoneTabSnapshot]
     private let focus: (UUID) -> Void
     private let performAction: (UUID, ZoneTabAction) -> Void
+    private let configureMenu: (UUID, NSMenu) -> Void
     private let prepareDrag: (UUID) -> ZoneTabDragPlan?
     private let radiusQuery: (UInt32) -> CGFloat?
     private let isSuspended: () -> Bool
@@ -225,6 +226,7 @@ final class ZoneTabController: NSObject {
 
     init(snapshots: @escaping () -> [ZoneTabSnapshot], focus: @escaping (UUID) -> Void,
          performAction: @escaping (UUID, ZoneTabAction) -> Void = { _, _ in },
+         configureMenu: @escaping (UUID, NSMenu) -> Void = { _, _ in },
          prepareDrag: @escaping (UUID) -> ZoneTabDragPlan? = { _ in nil },
          radiusQuery: ((UInt32) -> CGFloat?)? = nil,
          isSuspended: @escaping () -> Bool = { false },
@@ -237,6 +239,7 @@ final class ZoneTabController: NSObject {
         self.snapshots = snapshots
         self.focus = focus
         self.performAction = performAction
+        self.configureMenu = configureMenu
         self.prepareDrag = prepareDrag
         self.isSuspended = isSuspended
         self.visibleWindowQuery = visibleWindowQuery
@@ -245,6 +248,18 @@ final class ZoneTabController: NSObject {
         let reader = WindowCornerRadiusReader()
         self.radiusQuery = radiusQuery ?? { reader.radius(for: $0) }
         super.init()
+    }
+
+    func openFocusedContextMenu() -> Bool {
+        func buttons(_ view: NSView) -> [ZoneTabNativeButton] {
+            if let button = view as? ZoneTabNativeButton { return [button] }
+            return view.subviews.flatMap(buttons)
+        }
+        refresh()
+        let focused = presentations.values.flatMap { buttons($0.host) }.filter(\.isActiveTab)
+        guard focused.count == 1, let button = focused.first, let window = button.window else { return false }
+        button.showContextMenu(at: window.convertPoint(toScreen: button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)))
+        return true
     }
 
     private let dragOverlay = HotZoneOverlayController()
@@ -393,7 +408,7 @@ final class ZoneTabController: NSObject {
             let footprint = model.panelFrame()
             let frame = WindowOutlineCoordinatePolicy().appKitFrame(for: footprint, mainScreenFrame: mainScreen.frame)
             let panel = previous?.panel ?? Self.makePanel()
-            let view = ZoneTabStripView(snapshot: model, focus: focus, cornerRadius: radius, performAction: performAction,
+            let view = ZoneTabStripView(snapshot: model, focus: focus, cornerRadius: radius, performAction: performAction, configureMenu: configureMenu,
                 beginPress: { [weak self] id, event, action in self?.beginPress(id, event: event, sizeAction: action) })
             let host = previous?.host ?? ZoneTabHostingView(rootView: view)
             let contentChanged = previous?.snapshot != model || previous?.cornerRadius != radius
@@ -495,6 +510,7 @@ struct ZoneTabStripView: View {
     var focus: (UUID) -> Void
     var cornerRadius: CGFloat = 16
     var performAction: (UUID, ZoneTabAction) -> Void = { _, _ in }
+    var configureMenu: (UUID, NSMenu) -> Void = { _, _ in }
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
     var body: some View {
         let panel = snapshot.panelFrame()
@@ -643,7 +659,7 @@ struct ZoneTabStripView: View {
                 if showZoneName { zoneIcon(item) }
                 ZoneTabButton(item: item, showZoneName: showZoneName, showsNames: snapshot.showsNames, focus: focus,
                               destinations: snapshot.moveDestinations, sizeAction: snapshot.sizeActions[item.assignmentID],
-                              performAction: performAction, beginPress: beginPress)
+                              performAction: performAction, configureMenu: configureMenu, beginPress: beginPress)
             }
                 .id(item.assignmentID)
                 .frame(width: snapshot.edge.isVertical ? nil : (snapshot.showsNames ? 156 : (showZoneName ? 48 : 24)), height: 24)
@@ -705,6 +721,7 @@ private struct ZoneTabButton: NSViewRepresentable {
     var destinations: [Zone]
     var sizeAction: ZoneTabAction?
     var performAction: (UUID, ZoneTabAction) -> Void
+    var configureMenu: (UUID, NSMenu) -> Void
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
 
     func makeNSView(context: Context) -> ZoneTabNativeButton {
@@ -735,6 +752,7 @@ private struct ZoneTabButton: NSViewRepresentable {
         button.zoneID = item.zoneID
         button.destinations = destinations
         button.performAction = performAction
+        button.configureMenu = configureMenu
         button.sizeAction = sizeAction
         button.beginPress = beginPress
         let title = item.title.flatMap { $0.isEmpty ? nil : $0 } ?? item.appName
@@ -785,6 +803,7 @@ final class ZoneTabNativeButton: NSButton {
     var destinations: [Zone] = []
     var sizeAction: ZoneTabAction?
     var performAction: ((UUID, ZoneTabAction) -> Void)?
+    var configureMenu: ((UUID, NSMenu) -> Void)?
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
     override var acceptsFirstResponder: Bool { false }
     override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
@@ -802,18 +821,23 @@ final class ZoneTabNativeButton: NSButton {
     }
     override func rightMouseDown(with event: NSEvent) {
         NSApp.preventWindowOrdering()
-        guard let window, let menu = menu(for: event) else { return }
-        // A view-attached context menu raises the entire backing frame over its native windows.
-        menu.popUp(positioning: nil, at: window.convertPoint(toScreen: event.locationInWindow), in: nil)
+        guard let window else { return }
+        showContextMenu(at: window.convertPoint(toScreen: event.locationInWindow))
     }
-    override func menu(for event: NSEvent) -> NSMenu? {
+    func showContextMenu(at point: CGPoint) {
+        guard let menu = makeContextMenu() else { return }
+        if let session = menu.delegate as? TabContextMenuSession {
+            session.opensUpward = TabContextMenuPolicy.opensUpward(at: point,
+                visibleFrame: window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
+                menuHeight: max(440, menu.size.height))
+            session.rebuild()
+            menu.popUp(positioning: session.opensUpward ? menu.items.last : menu.items.first, at: point, in: nil)
+        } else { menu.popUp(positioning: nil, at: point, in: nil) }
+    }
+    override func menu(for event: NSEvent) -> NSMenu? { makeContextMenu() }
+    private func makeContextMenu() -> NSMenu? {
         guard let assignmentID else { return nil }
         let menu = NSMenu()
-        if isActiveTab {
-            let performAction = self.performAction
-            menu.addItem(ZoneTabMenuItem(title: "App Commands…") { performAction?(assignmentID, .appCommands) })
-            menu.addItem(.separator())
-        }
         for zone in destinations where zone.id != zoneID {
             let performAction = self.performAction
             let item = ZoneTabMenuItem(title: "Move to \(ZoneNameResolver().name(for: zone.id, in: destinations))") {
@@ -842,6 +866,7 @@ final class ZoneTabNativeButton: NSButton {
         let close = ZoneTabMenuItem(title: ZoneTabAction.close.title) { performAction?(assignmentID, .close) }
         close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
         menu.addItem(close)
+        configureMenu?(assignmentID, menu)
         return menu
     }
 

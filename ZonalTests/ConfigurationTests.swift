@@ -20,17 +20,21 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(HotkeyCommandKind(command: command).command(zoneID: .center), command)
     }
 
-    func testCommandOverlayCapturesTypingAndModifiedKeysWithoutSwitcherRelease() throws {
+    func testNativeAppMenuCapturesSearchButLeavesNavigationWithAppKit() throws {
         var snapshot = HotkeyCaptureSnapshot(appCommandsActive: true)
-        snapshot.flagsChanged([])
-        for code in [0, 53, 36, 123, 124, 125, 126, 51] {
+        for code in [53, 36, 123, 124, 125, 126] {
             let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true))
-            event.flags = [.maskCommand]
-            XCTAssertTrue(snapshot.captures(event))
+            XCTAssertFalse(snapshot.captures(event))
         }
+        let typing = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        let letters: [UniChar] = [97]
+        typing.keyboardSetUnicodeString(stringLength: 1, unicodeString: letters)
+        XCTAssertTrue(snapshot.captures(typing))
+        snapshot.update(HotkeyCaptureSnapshot(appCommandsActive: true, appCommandsFiltering: true))
+        let enter = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
+        XCTAssertTrue(snapshot.captures(enter))
         snapshot.update(HotkeyCaptureSnapshot())
-        let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
-        XCTAssertFalse(snapshot.captures(event))
+        XCTAssertFalse(snapshot.captures(typing))
     }
 
     func testMainStackClockDefaultsOffAndPersists() throws {
@@ -189,6 +193,7 @@ final class ConfigurationTests: XCTestCase {
     }
 
     func testAutomationCommandParsingIsDeterministic() {
+        XCTAssertEqual(LocalAutomationCommand(name: "app-menus", arguments: []), .appMenus)
         let assignmentID = UUID()
 
         XCTAssertEqual(
@@ -709,6 +714,7 @@ private final class CommandMenuFixture {
     let second = AXUIElementCreateApplication(910007)
     var current = true
     var enabled = true
+    var omitCategoryEnabled = false
     var replacement: AXUIElement?
     var presses: [AXUIElement] = []
     var outcome: AXError = .success
@@ -724,7 +730,10 @@ private final class CommandMenuFixture {
         }
         if name == kAXRoleAttribute { return (CFEqual(element, self.menu) ? kAXMenuRole : kAXMenuItemRole) as CFString }
         if name == kAXTitleAttribute { return (CFEqual(element, self.file) ? "File" : "Duplicate") as CFString }
-        if name == kAXEnabledAttribute { return (self.enabled ? kCFBooleanTrue : kCFBooleanFalse) }
+        if name == kAXEnabledAttribute {
+            if self.omitCategoryEnabled && CFEqual(element, self.file) { return nil }
+            return (self.enabled ? kCFBooleanTrue : kCFBooleanFalse)
+        }
         if name == kAXMenuItemCmdCharAttribute { return "d" as CFString }
         if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
         return nil
@@ -763,5 +772,79 @@ extension ConfigurationTests {
         fixture.outcome = .cannotComplete
         XCTAssertNotNil(fixture.reader.execute(command))
         XCTAssertEqual(fixture.presses.count, 1)
+    }
+}
+
+extension ConfigurationTests {
+    func testAXCategoryWithoutEnabledAttributeStillExposesEnabledCommands() throws {
+        let fixture = CommandMenuFixture()
+        fixture.omitCategoryEnabled = true
+        let roots = fixture.reader.read().0
+        XCTAssertTrue(try XCTUnwrap(roots.first).enabled)
+        XCTAssertTrue(try XCTUnwrap(roots.first?.children.first).enabled)
+        XCTAssertNil(fixture.reader.execute(try XCTUnwrap(roots.first?.children.first)))
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
+
+    @MainActor
+    func testNativeContextMenuReversesSectionsButNeverTheirContents() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Move to Right") {})
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        root.addItem(ZoneTabMenuItem(title: "Close Window") {})
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        // A reader-less background-tab menu still provides all captured Zonal actions.
+        XCTAssertNotNil(root.items.first?.view)
+        XCTAssertEqual(root.items.filter { $0.isEnabled && $0.view == nil }.map(\.title), ["Move to Right", "Fit to Zone", "Close Window"])
+        session.opensUpward = true; session.rebuild()
+        XCTAssertNotNil(root.items.last?.view)
+        XCTAssertEqual(root.items.filter { $0.isEnabled && $0.view == nil }.map(\.title), ["Move to Right", "Fit to Zone", "Close Window"])
+        XCTAssertEqual(TabContextMenuPolicy.sections(opensUpward: false), [.search, .zonal, .app])
+        XCTAssertEqual(TabContextMenuPolicy.sections(opensUpward: true), [.app, .zonal, .search])
+        XCTAssertTrue(TabContextMenuPolicy.opensUpward(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800), menuHeight: 300))
+        XCTAssertFalse(TabContextMenuPolicy.opensUpward(at: CGPoint(x: 100, y: 795), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800), menuHeight: 300))
+    }
+
+    @MainActor
+    func testNativeContextMenuHasRealSubmenusAndSearchesFullPaths() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        var fits = 0
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") { fits += 1 })
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(root.items.first { $0.submenu != nil })
+        XCTAssertEqual(category.submenu?.items.count, 2)
+        XCTAssertTrue(category.isEnabled)
+        session.setQuery("file duplicate")
+        let results = root.items.filter { $0.isEnabled && $0.action != nil }
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.allSatisfy { $0.title.contains("File › Duplicate") && $0.title.contains("⌥⇧⌘D") })
+        session.setQuery("fit")
+        let index = try XCTUnwrap(root.items.firstIndex { $0.title == "Fit to Zone" })
+        root.performActionForItem(at: index)
+        XCTAssertEqual(fits, 1)
+        session.setQuery("")
+        XCTAssertNotNil(root.items.first { $0.submenu != nil })
+    }
+}
+
+extension ConfigurationTests {
+    @MainActor
+    func testUpwardNativeMenuKeepsAppCategoryOrder() throws {
+        let fixture = CommandMenuFixture()
+        var roots = fixture.reader.read().0
+        var edit = try XCTUnwrap(roots.first)
+        edit.path = AppCommandPath(indices: [1], titles: ["Edit"])
+        roots.append(edit)
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.opensUpward = true
+        session.setNodes(roots, complete: true)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File", "Edit"])
+        XCTAssertNotNil(root.items.last?.view)
     }
 }

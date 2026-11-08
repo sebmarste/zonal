@@ -27,14 +27,12 @@ enum ZoneTabAction: Equatable {
     case fit
     case restoreCustom
     case close
-    case appCommands
 
     var title: String {
         switch self {
         case .move: "Move to…"
         case .fit: "Fit to Zone"
         case .restoreCustom: "Restore Custom Size"
-        case .appCommands: "App Commands…"
         case .close: "Close Window"
         }
     }

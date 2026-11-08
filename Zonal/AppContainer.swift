@@ -63,19 +63,18 @@ final class AppContainer: ObservableObject {
     private lazy var zoneTabs = ZoneTabController(
         snapshots: { [weak self] in self?.workspaceState.tabSnapshots() ?? [] },
         focus: { [weak self] id in self?.workspaceState.focusTab(assignmentID: id) },
-        performAction: { [weak self] id, action in
+        performAction: { [weak self] id, action in self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
+        configureMenu: { [weak self] id, menu in
             guard let self else { return }
-            if action == .appCommands {
-                let context = self.workspaceState.currentProfileContext()
-                guard let assignment = context.assignments.first(where: { $0.id == id }),
-                      let window = self.windowRegistry.bestMatch(for: assignment, in: context.windows) else { return }
-                self.appCommands.show(expectedWindow: window.element)
-            } else { self.restoreEngine.performTabAction(assignmentID: id, action: action) }
+            let context = self.workspaceState.currentProfileContext()
+            guard let assignment = context.assignments.first(where: { $0.id == id }),
+                  let window = self.windowRegistry.bestMatch(for: assignment, in: context.windows) else { return }
+            self.appCommands.configure(menu, expectedWindow: window.element)
         },
         prepareDrag: { [weak self] id in self?.workspaceState.tabDragPlan(assignmentID: id) },
         isSuspended: { [weak self] in self?.restoreEngine.isTabPresentationSuspended ?? true }
     )
-    private lazy var appCommands = AppCommandsController()
+    private(set) lazy var appCommands = AppCommandsController()
     lazy var switcher = SwitcherController(workspaceState: workspaceState)
     private lazy var hotZoneOverlay = HotZoneOverlayController()
     private lazy var windowMovementObserver: WindowMovementObserver = {
@@ -226,6 +225,7 @@ final class AppContainer: ObservableObject {
         hotkeys.start()
         hotkeys.onUserKeyDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
         windowMovementObserver.onMouseDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
+        appCommands.openFocusedTabMenu = { [weak self] in self?.zoneTabs.openFocusedContextMenu() ?? false }
         hotkeys.appCommands = appCommands
         appCommands.onVisibilityChanged = { [weak self] in self?.hotkeys.refreshCaptureSnapshot() }
         hotkeys.onEscape = { [weak self] in self?.zoneTabs.interaction.cancel() ?? false }
@@ -475,7 +475,7 @@ final class AppContainer: ObservableObject {
             windowCount: context.windows.count,
             restoreCounts: store.loadRestoreHistory().prefix(5).map {
                 SupportReport.RestoreCounts(moved: $0.moved, unchanged: $0.unchanged, skipped: $0.skipped, failed: $0.failed)
-            })
+            }) + "\nApp menus: " + appCommands.lastInventory
     }
 
     func detailedDiagnostics() -> String {
