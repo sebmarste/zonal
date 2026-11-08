@@ -183,7 +183,8 @@ final class AppCommandExecution {
         // Only our own dismissed menu may need to return focus to its captured window.
         // Never take focus back from another app or another document.
         let active = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        if menuOwnedFocus, active == ProcessInfo.processInfo.processIdentifier, (NSApp.keyWindow == nil || NSApp.keyWindow === menuKeyWindow) {
+        if menuOwnedFocus, active == ProcessInfo.processInfo.processIdentifier,
+           (NSApp.keyWindow == nil || NSApp.keyWindow === menuKeyWindow), reader.windowContextMatches() == true {
             focusWindow(begin)
         } else { begin() }
     }

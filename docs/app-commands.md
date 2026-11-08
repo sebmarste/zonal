@@ -41,7 +41,7 @@ Search stays inside the same native menu in a scrollable result area with explic
 selection. Its height fits the result count, with scrolling capped at 420 points
 or the available screen space. The same Search row stays at the original tab
 anchor in either direction. AppKit does not support resizing custom item views
-during tracking, so query changes end that tracking pass and re-present the same
+during tracking, so query changes end that tracking pass without a close fade and re-present the same
 snapshot at the original anchor. They do not trigger another AX scan. Return
 always uses the latest query, including input received during that transition.
 No-match and disabled rows cannot execute.
