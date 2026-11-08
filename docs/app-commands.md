@@ -149,3 +149,31 @@ the precise alert body was not supplied. The update adds passive search controls
 menu-host focus handling and a bounded focus-settling check. These are covered by
 deterministic fixtures; resolution of the reported live failure remains pending
 installation and user acceptance of the combined update.
+
+
+## Combined dynamic menu and focus update, 2026-11-08
+
+Source `0224bccc3ac6b0938e35c218374481d2ed26b7c0` passed `./scripts/check`: 402 XCTest tests
+(10 skipped, zero failures) and 19 Python tests. Fixtures cover dynamic result
+height/caps, anchored reopening without AX re-indexing, rapid typing/Return,
+icon preservation, passive search controls, opening-focus verification,
+unfinished-focus timeout, external apps and sibling-window rejection.
+
+The universal Developer ID build was accepted under notarization submission
+`41043240-8edd-4bef-af5a-2dbe6a3fa3b1`. Installed signature, staple, Gatekeeper assessment,
+both architectures and executable SHA-256 were verified on the MacBook:
+`a07d44528a5979ed5a533b87259a44b68e6d40b3fa7816653f4c6207e890d4c5`. Exactly one process (PID 45416) ran the
+installed path with the matching mapped executable. All four health flags were
+true, all doctor findings were OK, UW was active, and configuration bytes matched
+the pre-install backup after startup. The live inventory saw eight windows and
+read six complete enabled menu categories for the currently active T3 Code app.
+These checks establish installation/runtime health, not search or command success.
+
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-command-menu-ONpXNXHS`.
+Artifact, provenance and retained evidence: `/private/tmp/zonal-command-menu/`.
+ZIP SHA-256: `c3438062262812d6cab9d6c98031e11fd34cb98fc023b72dcc08201ff9a86cb0`.
+
+User acceptance of dynamic height/icons and cross-app right-click → Ardia Find
+is pending. The user has been asked to test both on the actual installed build.
+The earlier successful stability acceptance applies to the previous fixed-height
+build, not this new tracking/focus behavior.

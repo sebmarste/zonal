@@ -1,5 +1,16 @@
 # Mac mini continuation
 
+Current combined menu build (2026-11-08): `0224bcc` is signed,
+notarized and installed on the MacBook. Filtered menus fit their results and
+reopen at the original anchor without a close fade. Recognized categories and
+commands show icons, and Zonal action icons survive search. User-authorized
+right-click focuses the exact target window before reading its menus; command
+execution handles menu focus settling and rejects external/sibling context.
+402 XCTest tests (10 skipped) and 19 Python tests passed. Installed executable,
+permissions, mapped process, UW and preserved settings were verified. Live
+height/icons and cross-app right-click/Find acceptance are pending; see
+`docs/app-commands.md` for artifact and rollback evidence.
+
 Current app-command UI (2026-11-08): the user replaced the separate palette with
 a single native tab context menu. Search, Zonal actions and app categories are
 sections in that menu; upward opening reverses section order only. This supersedes
