@@ -1,12 +1,24 @@
 # Mac mini continuation
 
+Current investigation (2026-11-08): signed/notarized diagnostic source
+`7e44e49` is installed. It removes hover/expansion tooltips and records
+precise pre-menu focus failures plus native focus outcomes. 407 XCTest tests
+(10 skipped) and 19 Python tests passed; installed executable, health, UW and
+settings preservation were verified. The user accepted the preceding icon/
+shortcut layout, then reported “Window Focus Not Confirmed” for Ardia. Ardia's
+late-launch/cache hypothesis is unproven: its windows and menus are discoverable.
+The MacBook is currently locked (active `loginwindow` PID 182, zero windows), so
+Ardia repair is pending an unlocked reproduction. The user has been asked to
+unlock, close alerts and right-click Ardia once. Read `diagnostics` before
+`app-menus`, since the latter overwrites the last menu summary. Evidence and
+rollback: `docs/app-commands.md`, `/private/tmp/zonal-menu-focus-probe/`.
+
 Latest appearance build (2026-11-08): `7e06c99` is signed/notarized and
 installed on the MacBook. All menu images use 16-point aspect-preserving canvases;
 search rows share icon/title spacing and a right-aligned shortcut field. Native
 menus use actual key-equivalent/modifier columns instead of title suffixes.
 406 XCTest tests (10 skipped) and 19 Python tests passed. Installed executable,
-permissions, process, UW and settings preservation were verified. Visual icon/
-shortcut acceptance is pending. The user has confirmed cross-app right-click
+permissions, process, UW and settings preservation were verified. The user confirmed the icon/shortcut layout looks right. The user has confirmed cross-app right-click
 focus and Find on the preceding build. Evidence: `docs/app-commands.md`.
 
 Current combined menu build (2026-11-08): `0224bcc` is signed,

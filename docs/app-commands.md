@@ -207,12 +207,45 @@ both architectures, installed hash and mapped executable were verified:
 `ff4a458bf0afee88d0d5a2df779a62e76e6cef63969e739f343bf21367a62c88`. One installed process ran (PID 49617),
 all health flags were true, every doctor finding was OK, UW was active and saved
 configuration matched the pre-install backup after startup. Live AX inventory
-returned ten complete enabled Ardia categories. These are runtime checks; visual
-acceptance of the normalized icons and right-aligned shortcut columns is pending.
+returned ten complete enabled Ardia categories. These are runtime checks. The user subsequently confirmed **“looks right now”**
+for the normalized icons and right-aligned shortcut columns.
 
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-columns-If9e9HA1`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-columns/`.
 ZIP SHA-256: `4179cf7f9505213c26254e2057a1e89f9b964f760f0efe0da63d780b50775e8b`.
-The user has been asked to compare icon size/spacing and shortcut alignment in
-the actual tab menu and its search results. Earlier cross-app focus/Find success
-remains separately recorded against source `0224bcc`.
+This supplies live visual acceptance of icon size/spacing and shortcut alignment.
+The user then reported hover tooltips and a “Window Focus Not Confirmed” error
+when opening Ardia's tab menu, possibly after Ardia launched later than Zonal.
+Earlier cross-app focus/Find success remains separately recorded against source
+`0224bcc`; it does not establish that this later focus problem is resolved.
+
+
+## Hover tooltips and Ardia focus investigation, 2026-11-08
+
+Explicit native-menu and result-cell tooltips are removed, and text/table cell
+expansion tooltips are disabled. Full paths and shortcut text remain accessible
+through the result cell's accessibility label. Focus preparation now preserves
+its failure phase, target/focused process and Quartz window IDs, exact-window
+comparison, AX role and menu-bar availability before showing an alert. Native
+focus logs report raise/activation outcomes without window titles.
+
+Diagnostic source `7e44e494bd3bfec27938b5b4015061fbca66d366` passed `./scripts/check`: 407 XCTest
+tests (10 skipped, zero failures) and 19 Python tests. Its universal Developer ID
+build was accepted under notarization submission `aa2d727b-3be1-4411-b058-1e83ce3fa452` and
+installed on the MacBook. Signature/ticket/Gatekeeper, installed and mapped
+executable, all health/doctor checks, UW and configuration bytes were verified.
+Executable SHA-256: `e93593c46c52304ff2e17490138b0402cbd978e78fee066f573a4452470cb822`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-focus-probe-RqbRoVj9`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-focus-probe/`.
+
+The Ardia fault remains under investigation. Before replacement, Ardia's three
+windows were tracked under PID 49865 and a fresh read found ten categories, so
+there is no evidence of a startup-only command cache. One read was incomplete.
+The user clarified that the failure is the pre-menu focus-confirmation alert.
+The existing focus-assignment path also failed to confirm focus, but subsequent
+diagnostics identified a locked desktop, making that probe inconclusive about
+Ardia itself. After installation the active PID was 182 (`loginwindow`), the
+reported focus role was AXApplication, no menu bar was exposed and Zonal saw zero
+live desktop windows. Health permissions remained true. The user has been asked
+to unlock, dismiss focus alerts and right-click Ardia once to capture the precise
+failure. Do not claim Ardia repair from this diagnostic installation.
