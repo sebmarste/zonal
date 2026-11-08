@@ -190,3 +190,29 @@ supplies live acceptance for cross-app focusing and command execution. The user
 also inspected the menu and reported oversized/misaligned icons, then requested
 right-aligned shortcuts. Those visual issues are addressed in the subsequent
 appearance update; this is not acceptance of the new icon/column layout.
+
+
+## Icon and shortcut columns update, 2026-11-08
+
+Source `7e06c99c145fc01b6b561c3abd16b91c527b9cfa` passed `./scripts/check`: 406 XCTest tests
+(10 skipped, zero failures) and 19 Python tests. Added fixtures render a wide
+icon to verify transparent padding/aspect ratio, check common 16-point canvases
+without mutating original images, verify native shortcut metadata and Carbon
+special keys, and compare actual Auto Layout text/icon/shortcut positions at
+320- and 480-point result widths.
+
+The universal Developer ID build was accepted under notarization submission
+`3036da96-7370-4341-bc74-97118fdafc46`. MacBook strict signature, staple, Gatekeeper,
+both architectures, installed hash and mapped executable were verified:
+`ff4a458bf0afee88d0d5a2df779a62e76e6cef63969e739f343bf21367a62c88`. One installed process ran (PID 49617),
+all health flags were true, every doctor finding was OK, UW was active and saved
+configuration matched the pre-install backup after startup. Live AX inventory
+returned ten complete enabled Ardia categories. These are runtime checks; visual
+acceptance of the normalized icons and right-aligned shortcut columns is pending.
+
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-columns-If9e9HA1`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-columns/`.
+ZIP SHA-256: `4179cf7f9505213c26254e2057a1e89f9b964f760f0efe0da63d780b50775e8b`.
+The user has been asked to compare icon size/spacing and shortcut alignment in
+the actual tab menu and its search results. Earlier cross-app focus/Find success
+remains separately recorded against source `0224bcc`.

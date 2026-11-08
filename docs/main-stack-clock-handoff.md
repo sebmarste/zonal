@@ -1,5 +1,14 @@
 # Mac mini continuation
 
+Latest appearance build (2026-11-08): `7e06c99` is signed/notarized and
+installed on the MacBook. All menu images use 16-point aspect-preserving canvases;
+search rows share icon/title spacing and a right-aligned shortcut field. Native
+menus use actual key-equivalent/modifier columns instead of title suffixes.
+406 XCTest tests (10 skipped) and 19 Python tests passed. Installed executable,
+permissions, process, UW and settings preservation were verified. Visual icon/
+shortcut acceptance is pending. The user has confirmed cross-app right-click
+focus and Find on the preceding build. Evidence: `docs/app-commands.md`.
+
 Current combined menu build (2026-11-08): `0224bcc` is signed,
 notarized and installed on the MacBook. Filtered menus fit their results and
 reopen at the original anchor without a close fade. Recognized categories and
