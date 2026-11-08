@@ -1142,6 +1142,8 @@ extension ConfigurationTests {
         let menuPID = ProcessInfo.processInfo.processIdentifier
         fixture.focusedPIDs = [menuPID, menuPID, fixture.pid]
         XCTAssertTrue(fixture.reader.waitForContext(transitionPID: menuPID))
+        fixture.focusedPIDs = [menuPID, menuPID, fixture.pid]
+        XCTAssertTrue(fixture.reader.waitForContext(transitionPID: 910095))
         XCTAssertTrue(fixture.presses.isEmpty)
         fixture.current = false
         XCTAssertFalse(fixture.reader.waitForContext(transitionPID: menuPID))

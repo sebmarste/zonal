@@ -73,7 +73,7 @@ final class AppCommandReader: @unchecked Sendable {
             if let focused = attribute(system, kAXFocusedApplicationAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() {
                 var focusedPID: pid_t = 0
                 AXUIElementGetPid(focused as! AXUIElement, &focusedPID)
-                if focusedPID != pid && focusedPID != transitionPID { return false }
+                if focusedPID != pid && focusedPID != transitionPID && focusedPID != ProcessInfo.processInfo.processIdentifier { return false }
             }
             Thread.sleep(forTimeInterval: 0.02)
         } while Date() < deadline
@@ -665,7 +665,7 @@ final class AppCommandsController {
             openingWindow = (focused as! AXUIElement)
         }
         let reader = AppCommandReader(pid: targetPID, window: expectedWindow)
-        let valid = active == targetPID && reader.windowContextMatches() == true
+        let valid = active == targetPID && reader.contextIsCurrent()
         lastInventory = "Preparing focused window menus"
         let session = TabContextMenuSession(menu: menu, reader: reader, application: NSRunningApplication(processIdentifier: targetPID))
         self.session = session
