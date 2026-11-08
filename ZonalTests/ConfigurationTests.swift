@@ -33,6 +33,10 @@ final class ConfigurationTests: XCTestCase {
         snapshot.update(HotkeyCaptureSnapshot(appCommandsActive: true, appCommandsFiltering: true))
         let enter = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
         XCTAssertTrue(snapshot.captures(enter))
+        for code in [125, 126] {
+            let arrow = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true))
+            XCTAssertTrue(snapshot.captures(arrow))
+        }
         snapshot.update(HotkeyCaptureSnapshot())
         XCTAssertFalse(snapshot.captures(typing))
     }
@@ -718,6 +722,7 @@ private final class CommandMenuFixture {
     var replacement: AXUIElement?
     var presses: [AXUIElement] = []
     var outcome: AXError = .success
+    var onPress: (() -> Void)?
     lazy var reader = AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
         if name == kAXFocusedApplicationAttribute { return AXUIElementCreateApplication(self.current ? self.pid : 910099) }
         if name == kAXFocusedWindowAttribute { return self.window }
@@ -737,7 +742,7 @@ private final class CommandMenuFixture {
         if name == kAXMenuItemCmdCharAttribute { return "d" as CFString }
         if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
         return nil
-    }, press: { [unowned self] element in self.presses.append(element); return self.outcome })
+    }, press: { [unowned self] element in self.presses.append(element); self.onPress?(); return self.outcome })
 }
 
 extension ConfigurationTests {
@@ -808,7 +813,7 @@ extension ConfigurationTests {
     }
 
     @MainActor
-    func testNativeContextMenuHasRealSubmenusAndSearchesFullPaths() throws {
+    func testNativeContextMenuHasRealSubmenusAndSearchesFullPaths() async throws {
         let fixture = CommandMenuFixture()
         let root = NSMenu()
         var fits = 0
@@ -819,15 +824,17 @@ extension ConfigurationTests {
         XCTAssertEqual(category.submenu?.items.count, 2)
         XCTAssertTrue(category.isEnabled)
         session.setQuery("file duplicate")
-        let results = root.items.filter { $0.isEnabled && $0.action != nil }
+        let results = session.results.rows.compactMap(\.item).filter { $0.isEnabled && $0.action != nil }
         XCTAssertEqual(results.count, 2)
         XCTAssertTrue(results.allSatisfy { $0.title.contains("File › Duplicate") && $0.title.contains("⌥⇧⌘D") })
         session.setQuery("fit")
-        let index = try XCTUnwrap(root.items.firstIndex { $0.title == "Fit to Zone" })
-        root.performActionForItem(at: index)
-        XCTAssertEqual(fits, 1)
+        XCTAssertEqual(session.results.selectedItem?.title, "Fit to Zone")
         session.setQuery("")
         XCTAssertNotNil(root.items.first { $0.submenu != nil })
+        session.setQuery("fit")
+        session.input(key: 36, text: nil, flags: [])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(fits, 1)
     }
 }
 
@@ -846,5 +853,141 @@ extension ConfigurationTests {
         session.setNodes(roots, complete: true)
         XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File", "Edit"])
         XCTAssertNotNil(root.items.last?.view)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testContextMenuSnapshotDoesNotMutateDuringTracking() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let original = root.items
+        let height = root.size.height
+        session.menuWillOpen(root)
+        session.setNodes([], complete: false)
+        XCTAssertEqual(root.items.map(ObjectIdentifier.init), original.map(ObjectIdentifier.init))
+        XCTAssertEqual(root.size.height, height)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+        session.cancel()
+    }
+
+    @MainActor
+    func testSearchPreservesMenuHeightAndOpeningAnchorInBothDirections() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let root = NSMenu()
+            root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+            let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: false)
+            let height = root.size.height
+            let anchor = upward ? root.items.last : root.items.first
+            for query in ["duplicate", "fit", "no such command", ""] {
+                session.setQuery(query)
+                XCTAssertEqual(root.size.height, height, accuracy: 0.5, "query=\(query) upward=\(upward)")
+                XCTAssertTrue((upward ? root.items.last : root.items.first) === anchor)
+            }
+            XCTAssertFalse(root.items.contains { $0.title.localizedCaseInsensitiveContains("dynamic") })
+        }
+    }
+
+    @MainActor
+    func testAppleCategoryIsExcludedWithoutDroppingOtherCategories() throws {
+        let fixture = CommandMenuFixture()
+        let file = try XCTUnwrap(fixture.reader.read().0.first)
+        var apple = file
+        apple.path = AppCommandPath(indices: [99], titles: ["Apple"])
+        let root = NSMenu()
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes([file, apple], complete: false)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+        session.setQuery("duplicate")
+        XCTAssertEqual(session.results.rows.filter(\.enabled).count, 2)
+        XCTAssertTrue(session.results.rows.filter(\.enabled).allSatisfy { $0.title.hasPrefix("File ›") })
+        apple.path.titles = ["\u{F8FF}"]
+        XCTAssertTrue(apple.isAppleMenu)
+        XCTAssertFalse(file.isAppleMenu)
+    }
+
+    @MainActor
+    func testSearchSelectsEnabledResultAndReturnInvokesOnlyThatHandlerOnce() async throws {
+        let root = NSMenu()
+        var firstCalls = 0
+        var secondCalls = 0
+        let disabled = ZoneTabMenuItem(title: "Action unavailable") { XCTFail("Disabled action invoked") }
+        disabled.isEnabled = false
+        root.addItem(disabled)
+        root.addItem(ZoneTabMenuItem(title: "Action first") { firstCalls += 1 })
+        root.addItem(ZoneTabMenuItem(title: "Action second") { secondCalls += 1 })
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        session.setQuery("Action")
+        XCTAssertEqual(session.results.selectedItem?.title, "Action first")
+        session.input(key: 125, text: nil, flags: [])
+        XCTAssertEqual(session.results.selectedItem?.title, "Action second")
+        session.input(key: 126, text: nil, flags: [])
+        XCTAssertEqual(session.results.selectedItem?.title, "Action first")
+        session.setQuery("no matching item")
+        XCTAssertNil(session.results.selectedItem)
+        session.input(key: 36, text: nil, flags: [])
+        session.setQuery("Action")
+        session.input(key: 125, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(firstCalls, 0)
+        XCTAssertEqual(secondCalls, 1)
+    }
+
+    @MainActor
+    func testMenuPreparationCompletesBeforeTrackingWithWholeSnapshot() async throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        let ready = expectation(description: "Prepared menu")
+        session.prepare {
+            XCTAssertFalse(session.isPreparing)
+            XCTAssertFalse(session.isTracking)
+            XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+            XCTAssertEqual(root.items.first { $0.submenu != nil }?.submenu?.items.count, 2)
+            ready.fulfill()
+        }
+        XCTAssertTrue(session.isPreparing)
+        await fulfillment(of: [ready], timeout: 3)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testSearchReturnExecutesExactAppResultAfterMenuDismissal() async throws {
+        let fixture = CommandMenuFixture()
+        let pressed = expectation(description: "Exact app command pressed")
+        fixture.onPress = { pressed.fulfill() }
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        session.setQuery("file duplicate")
+        session.input(key: 125, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        await fulfillment(of: [pressed], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.presses.first), fixture.second))
+    }
+
+    @MainActor
+    func testPreparationCannotPresentAfterContextChanges() async {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let closed = expectation(description: "Changed context cancels preparation")
+        session.canPresent = { false }
+        session.onClose = { closed.fulfill() }
+        session.prepare { XCTFail("Stale prepared menu presented") }
+        await fulfillment(of: [closed], timeout: 3)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertFalse(session.isTracking)
     }
 }

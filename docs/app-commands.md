@@ -12,8 +12,8 @@ section stays nearest the opening point. A configurable **App Commands** binding
 opens this same menu at the focused window's tab; there is no separate palette.
 
 Type to filter both Zonal and app commands. App results show full menu paths and
-shortcuts. Arrow keys navigate native submenus. Return executes the highlighted
-search result (or first enabled result); Escape clears a search, then follows
+shortcuts. Arrow keys navigate native submenus. The first enabled search result is selected automatically; Up/Down changes the
+visible selection and Return executes exactly that result. Escape clears a search, then follows
 normal native-menu dismissal. Backspace edits the filter and Command-V pastes
 search text. Clicking the search clear button resets the filter. The existing
 keyboard tap handles search text because custom native-menu views do not receive
@@ -28,10 +28,17 @@ app-command notice; it never silently targets another document.
 AX categories are discovered before scanning descendants. Missing AXEnabled on a
 menu container does not disable all its children; commands still require explicit
 enabled state. Reads use a 150 ms message timeout, bounded depth/node counts and
-1.5 second budgets. Categories index incrementally and refresh their children
-when opened. Search results fill as indexing progresses. Applications that do not
-expose a dynamic submenu through AX show an unavailable-menu notice; Zonal does
-not press a command to force its submenu to populate.
+a 1.5 second scan budget. The fresh inventory is assembled before presentation;
+root categories and submenus remain a frozen snapshot until dismissal. This
+prevents delayed AX reads from resizing or scrolling an open menu. The Apple
+menu is excluded. Empty AX submenus are unavailable; Zonal does not press a
+command to force population, and there is no dynamic-items hint.
+
+Search stays inside the same native menu in a scrollable result area with explicit
+selection. Its height matches the unfiltered menu so the Search row stays at the
+opening point even when results change. No-match and disabled rows cannot execute.
+Typing during the bounded preparation is buffered for the menu; Escape cancels.
+A changed app/window cancels preparation before a stale menu can appear.
 
 Before one AXPress, execution revalidates the active app, original AX window,
 category/path, exact retained command element, enabled state (including parents),
@@ -48,7 +55,9 @@ also retain the most recent menu inventory summary.
 
 Deterministic fixtures cover section reversal without reversing contents, native
 submenus, full-path search, preserved Zonal actions, missing container AXEnabled,
-command enabled state, exact duplicate identities, stale/replaced references,
+stable search height in either direction, snapshot immutability during tracking,
+Apple exclusion, automatic enabled-result selection, arrow navigation, exactly-once
+Return dispatch, command enabled state, exact duplicate identities, stale/replaced references,
 focus changes, shortcut modifiers and timeout/no-retry behavior. They do not need
 live Accessibility permissions. Native app menu availability, search interaction,
 arrow navigation and actual command execution need separate live acceptance on

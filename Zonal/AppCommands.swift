@@ -29,6 +29,7 @@ struct AppCommandNode: Identifiable, @unchecked Sendable {
     var isMenu: Bool
     var id: [Int] { path.indices }
     var title: String { path.titles.last ?? "" }
+    var isAppleMenu: Bool { path.titles.count == 1 && ["Apple", "\u{F8FF}"].contains(title) }
     var descendants: [AppCommandNode] { children.flatMap { [$0] + $0.descendants } }
 }
 
@@ -100,7 +101,7 @@ final class AppCommandReader: @unchecked Sendable {
             return (descend(category.element, path: category.path, depth: 0, ancestorsEnabled: category.enabled), complete)
         }
         guard let bar = attribute(app, kAXMenuBarAttribute), CFGetTypeID(bar) == AXUIElementGetTypeID() else { return ([], false) }
-        var nodes = descend(bar as! AXUIElement, path: AppCommandPath(indices: [], titles: []), depth: 0, recursive: false)
+        var nodes = descend(bar as! AXUIElement, path: AppCommandPath(indices: [], titles: []), depth: 0, recursive: false).filter { !$0.isAppleMenu }
         if categoriesOnly { return (nodes, complete) }
         // Discover every category before spending time in any one category's descendants.
         for index in nodes.indices where nodes[index].isMenu {
@@ -148,7 +149,7 @@ struct TabContextMenuPolicy {
 }
 
 // Native custom menu views do not receive normal menu typing. Keep text filtering
-// on the existing input tap; AppKit retains arrows, Return, Escape and submenus.
+// on the existing input tap; AppKit retains unfiltered navigation and submenus.
 final class TabMenuSearchField: NSSearchField {
     var clear: (() -> Void)?
     override var acceptsFirstResponder: Bool { false }
@@ -158,26 +159,112 @@ final class TabMenuSearchField: NSSearchField {
     }
 }
 
+// Search stays inside the native menu, but uses a table for public, explicit
+// selection/scrolling instead of private NSMenu highlight methods.
+@MainActor
+final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableViewDelegate {
+    struct Row {
+        var item: NSMenuItem?
+        var title: String { item?.title ?? "" }
+        var enabled: Bool { item?.isEnabled == true && item?.action != nil }
+    }
+    private final class Table: NSTableView { override var acceptsFirstResponder: Bool { false } }
+    private final class SelectedRow: NSTableRowView {
+        override var isEmphasized: Bool { get { true } set {} }
+    }
+    let table: NSTableView = Table()
+    private(set) var rows: [Row] = []
+    var activate: ((NSMenuItem) -> Void)?
+    var selectedItem: NSMenuItem? {
+        rows.indices.contains(table.selectedRow) ? rows[table.selectedRow].item : nil
+    }
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        drawsBackground = false
+        contentView.drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        scrollerStyle = .overlay
+        table.headerView = nil
+        table.backgroundColor = .clear
+        table.rowHeight = 28
+        table.intercellSpacing = .zero
+        table.allowsMultipleSelection = false
+        table.allowsEmptySelection = true
+        table.selectionHighlightStyle = .regular
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("command"))
+        column.width = 320
+        table.addTableColumn(column)
+        table.dataSource = self; table.delegate = self
+        table.target = self; table.action = #selector(clicked)
+        table.autoresizingMask = [.width]
+        documentView = table
+        table.setAccessibilityLabel("Matching commands")
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func setRows(_ value: [Row]) {
+        rows = value
+        table.reloadData()
+        if let first = rows.firstIndex(where: \.enabled) { select(first) }
+        else { table.deselectAll(nil) }
+    }
+    private func select(_ index: Int) {
+        table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        table.scrollRowToVisible(index)
+    }
+    func move(_ direction: Int) {
+        let candidates = rows.indices.filter { rows[$0].enabled }
+        guard !candidates.isEmpty else { return }
+        let current = candidates.firstIndex(of: table.selectedRow) ?? 0
+        select(candidates[min(max(0, current + direction), candidates.count - 1)])
+    }
+    @objc private func clicked() {
+        let row = table.clickedRow
+        guard rows.indices.contains(row), rows[row].enabled, let item = rows[row].item else { return }
+        activate?(item)
+    }
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { rows[row].enabled }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { rows[row].item == nil ? 8 : 28 }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectedRow() }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let label = NSTextField(labelWithString: rows[row].title)
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = rows[row].enabled ? .labelColor : .disabledControlTextColor
+        label.lineBreakMode = .byTruncatingMiddle
+        label.toolTip = rows[row].title
+        let cell = NSTableCellView(frame: NSRect(x: 0,y: 0,width: tableView.bounds.width,height: 28))
+        label.frame = cell.bounds.insetBy(dx: 12, dy: 5)
+        label.autoresizingMask = [.width]
+        cell.addSubview(label); cell.textField = label
+        return cell
+    }
+}
+
 @MainActor
 final class TabContextMenuSession: NSObject, NSMenuDelegate {
     let menu: NSMenu
     let reader: AppCommandReader?
     let zonalItems: [NSMenuItem]
     let search = TabMenuSearchField(frame: NSRect(x: 12, y: 8, width: 296, height: 26))
+    let results = TabMenuResultsView()
     private let searchItem = NSMenuItem()
+    private let resultsItem = NSMenuItem()
     private var nodes: [AppCommandNode] = []
-    private var submenuNodes: [ObjectIdentifier: AppCommandNode] = [:]
-    private var submenuObjects: [NSMenu] = []
-    private var complete = false
-    private var indexing = false
-    private var loading = false
     private var closed = false
+    private var browseHeight: CGFloat?
+    private(set) var isTracking = false
+    private(set) var isPreparing = false
     var opensUpward = false
     private(set) var query = ""
     var onOpen: (() -> Void)?
     var onClose: (() -> Void)?
+    var onPreparing: (() -> Void)?
     var onInventory: ((String) -> Void)?
     var onQueryChanged: (() -> Void)?
+    var canPresent: () -> Bool = { true }
     private(set) var unavailableReason: String
 
     init(menu: NSMenu, reader: AppCommandReader?, unavailableReason: String = "App commands require the focused window") {
@@ -196,9 +283,10 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         search.clear = { [weak self] in self?.setQuery("") }
         view.addSubview(search)
         searchItem.view = view
+        resultsItem.view = results
+        results.activate = { [weak self] item in self?.activate(item) }
         rebuild()
     }
-
     private func info(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
@@ -206,6 +294,22 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     }
     private func matches(_ title: String) -> Bool {
         AppCommandPath(indices: [], titles: [title]).matches(query)
+    }
+    func prepare(_ completion: @escaping @MainActor @Sendable () -> Void) {
+        guard !closed else { return }
+        guard let reader else { completion(); return }
+        isPreparing = true; onPreparing?()
+        reader.queue.async { [weak self] in
+            let (nodes, complete) = reader.read()
+            Self.deliver {
+                guard let self, !self.closed else { return }
+                self.setNodes(nodes, complete: complete)
+                self.isPreparing = false
+                self.onQueryChanged?()
+                guard self.canPresent() else { self.cancel(); self.onClose?(); return }
+                completion()
+            }
+        }
     }
     func setQuery(_ value: String) {
         guard !closed else { return }
@@ -215,37 +319,51 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         onQueryChanged?()
     }
     func setNodes(_ value: [AppCommandNode], complete: Bool) {
-        guard !closed else { return }
-        nodes = value
-        self.complete = complete
-        loading = false
+        // The menu is a frozen snapshot while tracking: no loading-induced resize,
+        // scroll changes, replaced mouse targets, or lost keyboard selection.
+        guard !closed, !isTracking else { return }
+        nodes = value.filter { !$0.isAppleMenu }
+        browseHeight = nil
         onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
         rebuild()
     }
+    private func appendSections(_ sections: [TabContextMenuPolicy.Section: [NSMenuItem]]) {
+        for section in TabContextMenuPolicy.sections(opensUpward: opensUpward) {
+            let items = sections[section] ?? []
+            guard !items.isEmpty else { continue }
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            items.forEach(menu.addItem)
+        }
+    }
     func rebuild() {
         menu.removeAllItems()
-        submenuNodes.removeAll(); submenuObjects.removeAll()
-        let zonal = query.isEmpty ? zonalItems : zonalItems.filter { matches($0.title) }
-        var app: [NSMenuItem] = []
-        if query.isEmpty {
-            app = nodes.map { item(for: $0, fullPath: false) }
+        if query.isEmpty || browseHeight == nil {
+            var app = nodes.map { item(for: $0, fullPath: false) }
             if reader == nil { app = [info(unavailableReason)] }
-            else if app.isEmpty { app = [info(loading ? "Reading app menus…" : "App did not expose any menus")] }
-            if !complete, !nodes.isEmpty { app.append(info("Some dynamic menus may be unavailable")) }
-        } else {
-            app = nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu && matches($0.path.display + " " + $0.shortcut) }
-                .map { item(for: $0, fullPath: true) }
-            if app.isEmpty { app = [info(loading || indexing ? "Reading app menus…" : "No matching app commands")] }
+            else if app.isEmpty { app = [info("App did not expose any menus")] }
+            appendSections([.search: [searchItem], .zonal: zonalItems, .app: app])
+            menu.update()
+            browseHeight = menu.size.height
+            if query.isEmpty { return }
+            menu.removeAllItems()
         }
-        let sections: [TabContextMenuPolicy.Section: [NSMenuItem]] = [
-            .search: [searchItem],
-            .zonal: zonal.isEmpty ? [info("No matching Zonal commands")] : zonal,
-            .app: app
-        ]
-        for section in TabContextMenuPolicy.sections(opensUpward: opensUpward) {
-            if !menu.items.isEmpty { menu.addItem(.separator()) }
-            for item in sections[section] ?? [] { menu.addItem(item) }
+        let zonal = zonalItems.filter { matches($0.title) }
+        let app = nodes.flatMap { [$0] + $0.descendants }
+            .filter { !$0.isMenu && matches($0.path.display + " " + $0.shortcut) }
+            .map { item(for: $0, fullPath: true) }
+        let groups = opensUpward ? [app, zonal] : [zonal, app]
+        var rows: [TabMenuResultsView.Row] = []
+        for group in groups where !group.isEmpty {
+            if !rows.isEmpty { rows.append(.init(item: nil)) }
+            rows += group.map { .init(item: $0) }
         }
+        if rows.isEmpty { rows = [.init(item: info("No matching commands"))] }
+        results.setRows(rows)
+        results.frame.size.height = 24
+        // Preserve the exact menu height and Search-row anchor while filtering.
+        if opensUpward { menu.addItem(resultsItem); menu.addItem(.separator()); menu.addItem(searchItem) }
+        else { menu.addItem(searchItem); menu.addItem(.separator()); menu.addItem(resultsItem) }
+        results.frame.size.height = max(24, 24 + (browseHeight ?? menu.size.height) - menu.size.height)
         menu.update()
     }
     private func item(for node: AppCommandNode, fullPath: Bool) -> NSMenuItem {
@@ -273,11 +391,8 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         if node.isMenu {
             let submenu = NSMenu(title: node.title)
             submenu.autoenablesItems = false
-            submenu.delegate = self
-            submenuNodes[ObjectIdentifier(submenu)] = node
-            submenuObjects.append(submenu)
             for child in node.children { submenu.addItem(self.item(for: child, fullPath: false)) }
-            if submenu.items.isEmpty { submenu.addItem(info("Reading menu…")) }
+            if submenu.items.isEmpty { submenu.addItem(info("No available commands")) }
             item.submenu = submenu
         }
         return item
@@ -289,79 +404,37 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         CFRunLoopWakeUp(CFRunLoopGetMain())
     }
     func menuWillOpen(_ menu: NSMenu) {
-        if menu === self.menu {
-            closed = false
-            onOpen?()
-            guard let reader else { return }
-            loading = true
-            rebuild()
-            reader.queue.async { [weak self] in
-                let (nodes, complete) = reader.read()
-                Self.deliver {
-                    guard let self, !self.closed else { return }
-                    self.setNodes(nodes, complete: complete)
-                    self.indexing = true
-                    self.indexCategories(nodes, complete: true)
-                }
-            }
-        } else if let node = submenuNodes[ObjectIdentifier(menu)], let reader {
-            let menuID = ObjectIdentifier(menu)
-            reader.queue.async { [weak self] in
-                let (children, complete) = reader.read(category: node)
-                Self.deliver {
-                    guard let self, !self.closed,
-                          let menu = self.submenuObjects.first(where: { ObjectIdentifier($0) == menuID }) else { return }
-                    menu.removeAllItems()
-                    for child in children { menu.addItem(self.item(for: child, fullPath: false)) }
-                    if children.isEmpty { menu.addItem(self.info(complete ? "No commands" : "App did not expose this menu")) }
-                    menu.update()
-                    self.replaceChildren(children, at: node.path)
-                }
-            }
-        }
-    }
-    private func indexCategories(_ remaining: [AppCommandNode], complete: Bool) {
-        guard !closed, let reader else { return }
-        guard let node = remaining.first else {
-            indexing = false
-            self.complete = complete
-            onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
-            if !query.isEmpty { rebuild() }
-            return
-        }
-        guard node.isMenu else { indexCategories(Array(remaining.dropFirst()), complete: complete); return }
-        reader.queue.async { [weak self] in
-            let (children, categoryComplete) = reader.read(category: node)
-            Self.deliver {
-                guard let self, !self.closed else { return }
-                self.replaceChildren(children, at: node.path)
-                if !self.query.isEmpty { self.rebuild() }
-                self.indexCategories(Array(remaining.dropFirst()), complete: complete && categoryComplete)
-            }
-        }
-    }
-    private func replaceChildren(_ children: [AppCommandNode], at path: AppCommandPath) {
-        func replace(_ node: AppCommandNode) -> AppCommandNode {
-            var copy = node
-            copy.children = node.path == path ? children : node.children.map(replace)
-            return copy
-        }
-        nodes = nodes.map(replace)
+        guard menu === self.menu else { return }
+        isTracking = true; onOpen?()
     }
     func menuDidClose(_ menu: NSMenu) {
-        if menu === self.menu { closed = true; onClose?() }
+        if menu === self.menu { closed = true; isTracking = false; onClose?() }
     }
-    func cancel() { closed = true; menu.cancelTracking() }
+    func cancel() { closed = true; isPreparing = false; isTracking = false; menu.cancelTracking() }
+    private func activate(_ item: NSMenuItem) {
+        guard !closed, item.isEnabled, item.action != nil else { return }
+        // Capture the exact handler before menu dismissal releases its weak target.
+        let target = item.target
+        let action = item.action
+        closed = true
+        menu.cancelTracking()
+        DispatchQueue.main.async {
+            if let command = item as? ZoneTabMenuItem { command.invoke() }
+            else if let action { NSApp.sendAction(action, to: target, from: item) }
+        }
+    }
     func input(key: Int64, text: String?, flags: CGEventFlags) {
-        if key == 53 { setQuery(""); return }
+        guard !closed else { return }
+        if key == 53 {
+            if isPreparing { cancel(); onClose?() }
+            else { setQuery("") }
+            return
+        }
         if [36, 76].contains(key), !query.isEmpty {
-            let highlighted = menu.highlightedItem
-            guard let item = (highlighted?.isEnabled == true && highlighted?.action != nil && highlighted?.submenu == nil ? highlighted : nil)
-                ?? menu.items.first(where: { $0.isEnabled && $0.action != nil && $0.submenu == nil }),
-                let action = item.action else { return }
-            menu.cancelTracking()
-            DispatchQueue.main.async { NSApp.sendAction(action, to: item.target, from: item) }
-        } else if [51, 117].contains(key) {
+            if !isPreparing, let item = results.selectedItem { activate(item) }
+        } else if key == 125 { results.move(1) }
+        else if key == 126 { results.move(-1) }
+        else if [51, 117].contains(key) {
             if flags.contains(.maskCommand) { setQuery("") }
             else if !query.isEmpty { setQuery(String(query.dropLast())) }
         } else if key == 9, flags.contains(.maskCommand) {
@@ -382,7 +455,8 @@ final class AppCommandsController {
     private var activationObserver: NSObjectProtocol?
     private(set) var isVisible = false
     private(set) var lastInventory = "App menus have not been opened"
-    var isFiltering: Bool { session?.query.isEmpty == false }
+    var isCapturingInput: Bool { isVisible || session?.isPreparing == true }
+    var isFiltering: Bool { session?.isPreparing == true || session?.query.isEmpty == false }
     var onVisibilityChanged: (() -> Void)?
     var openFocusedTabMenu: (() -> Bool)?
 
@@ -420,6 +494,11 @@ final class AppCommandsController {
         let session = TabContextMenuSession(menu: menu, reader: reader)
         self.session = session
         pid = targetPID
+        session.canPresent = { [weak self, weak session] in
+            guard let self, self.session === session else { return false }
+            return NSWorkspace.shared.frontmostApplication?.processIdentifier == active && reader?.windowContextMatches() != false
+        }
+        session.onPreparing = { [weak self] in self?.startWatching(); self?.onVisibilityChanged?() }
         session.onOpen = { [weak self, weak session] in
             guard let self, let session, self.session === session else { return }
             self.isVisible = true; self.onVisibilityChanged?()
@@ -433,9 +512,10 @@ final class AppCommandsController {
         session.onQueryChanged = { [weak self] in self?.onVisibilityChanged?() }
     }
     private func startWatching() {
+        guard timer == nil else { return }
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, self.isVisible else { return }
+                guard let self, self.isCapturingInput else { return }
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier != self.pid { self.close() }
             }
         }
@@ -446,7 +526,7 @@ final class AppCommandsController {
         RunLoop.main.add(timer, forMode: .common)
     }
     private func verifyFocus() {
-        guard isVisible, let session, let reader = session.reader, !checkingFocus else { return }
+        guard isCapturingInput, let session, let reader = session.reader, !checkingFocus else { return }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != pid { close(); return }
         checkingFocus = true
         reader.queue.async { [weak self, weak session] in
@@ -459,7 +539,7 @@ final class AppCommandsController {
         }
     }
     func focusedWindowChanged(_ window: AXUIElement?) {
-        guard isVisible, let reader = session?.reader, let window else { return }
+        guard isCapturingInput, let reader = session?.reader, let window else { return }
         if !CFEqual(window, reader.window) { close() }
     }
     func close() {

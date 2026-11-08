@@ -54,7 +54,7 @@ struct HotkeyCaptureSnapshot {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
         if appCommandsActive {
-            if appCommandsFiltering && [36, 76, 53].contains(code) { return true }
+            if appCommandsFiltering && [36, 76, 53, 125, 126].contains(code) { return true }
             if [51, 117].contains(code) { return true }
             if flags.contains(.maskCommand) { return code == 9 }
             if flags.contains(.maskControl) { return false }
@@ -231,7 +231,7 @@ final class HotkeyManager {
         let configuration = store.loadConfiguration()
         inputTap?.update(HotkeyCaptureSnapshot(bindings: configuration.hotkeys,
             useNativeCommandTab: configuration.useNativeCommandTab || workspaceState.shouldUseNativeSwitcherInFullScreen(),
-            switcherActive: switcher.isVisible, appCommandsActive: appCommands?.isVisible ?? false, appCommandsFiltering: appCommands?.isFiltering ?? false))
+            switcherActive: switcher.isVisible, appCommandsActive: appCommands?.isCapturingInput ?? false, appCommandsFiltering: appCommands?.isFiltering ?? false))
     }
 
     func stop() {
@@ -323,7 +323,7 @@ final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
 
-        if let appCommands, appCommands.isVisible {
+        if let appCommands, appCommands.isCapturingInput {
             appCommands.input(key: event.getIntegerValueField(.keyboardEventKeycode),
                               text: NSEvent(cgEvent: event)?.characters, flags: event.flags)
             return nil
