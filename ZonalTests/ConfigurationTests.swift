@@ -747,7 +747,7 @@ private final class CommandMenuFixture {
         if name == kAXMenuItemCmdCharAttribute { return "d" as CFString }
         if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
         return nil
-    }, press: { [unowned self] element in self.presses.append(element); self.onPress?(); return self.outcome })
+    }, press: { [unowned self] element in self.presses.append(element); self.onPress?(); return self.outcome }, diagnosticWindowID: { _ in nil })
 }
 
 extension ConfigurationTests {
@@ -1318,5 +1318,26 @@ extension ConfigurationTests {
         XCTAssertEqual(AppCommandReader.glyph(119), "F9")
         XCTAssertEqual(AppCommandReader.glyph(146), "F19")
         XCTAssertEqual(AppCommandReader.shortcutKey(character: "", glyph: 999).key, "")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testAppMenusHaveNoHoverTooltipsButKeepAccessiblePathsAndShortcuts() throws {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(menu.items.first { $0.submenu != nil })
+        XCTAssertNil(category.toolTip)
+        XCTAssertTrue(try XCTUnwrap(category.submenu).items.allSatisfy { $0.toolTip == nil })
+        session.setQuery("file duplicate")
+        let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0))
+        XCTAssertNil(cell.toolTip)
+        XCTAssertTrue(cell.subviews.allSatisfy { $0.toolTip == nil })
+        XCTAssertTrue(cell.subviews.compactMap { $0 as? NSTextField }.allSatisfy { !$0.allowsExpansionToolTips })
+        XCTAssertEqual(cell.accessibilityLabel(), "File › Duplicate    ⌥⇧⌘D")
+        XCTAssertFalse(session.results.tableView(session.results.table, shouldShowCellExpansionFor: nil, row: 0))
     }
 }

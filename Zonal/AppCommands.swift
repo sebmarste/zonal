@@ -44,12 +44,15 @@ final class AppCommandReader: @unchecked Sendable {
     let queue = DispatchQueue(label: "Zonal app commands", qos: .userInitiated)
     private let attribute: (AXUIElement, String) -> CFTypeRef?
     private let press: (AXUIElement) -> AXError
+    private let diagnosticWindowID: (AXUIElement) -> UInt32?
     init(pid: pid_t, window: AXUIElement,
          attribute: @escaping (AXUIElement, String) -> CFTypeRef? = commandAttribute,
-         press: @escaping (AXUIElement) -> AXError = { AXUIElementPerformAction($0, kAXPressAction as CFString) }) {
+         press: @escaping (AXUIElement) -> AXError = { AXUIElementPerformAction($0, kAXPressAction as CFString) },
+         diagnosticWindowID: @escaping (AXUIElement) -> UInt32? = { WindowIDResolver().resolve(element: $0) { nil }.windowID }) {
         self.pid = pid
         self.attribute = attribute
         self.press = press
+        self.diagnosticWindowID = diagnosticWindowID
         app = AXUIElementCreateApplication(pid)
         self.window = window
         AXUIElementSetMessagingTimeout(app, 0.15)
@@ -64,6 +67,25 @@ final class AppCommandReader: @unchecked Sendable {
     func windowContextMatches() -> Bool? {
         guard let focused = attribute(app, kAXFocusedWindowAttribute) else { return nil }
         return CFEqual(focused, window)
+    }
+    func contextDiagnostic() -> String {
+        func element(_ value: CFTypeRef?) -> AXUIElement? {
+            guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+            return (value as! AXUIElement)
+        }
+        func process(_ value: AXUIElement?) -> pid_t {
+            guard let value else { return 0 }
+            var pid: pid_t = 0; AXUIElementGetPid(value, &pid); return pid
+        }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.15)
+        let active = element(attribute(system, kAXFocusedApplicationAttribute))
+        let focused = element(attribute(app, kAXFocusedWindowAttribute))
+        let targetID = diagnosticWindowID(window) ?? 0
+        let focusedID = focused.flatMap(diagnosticWindowID) ?? 0
+        let same = focused.map { CFEqual($0, window) } ?? false
+        let role = focused.flatMap { attribute($0, kAXRoleAttribute) as? String } ?? "missing"
+        return "targetPID=\(pid) systemPID=\(process(active)) focusedPID=\(process(focused)) targetWindow=\(targetID) focusedWindow=\(focusedID) sameWindow=\(same) focusedRole=\(role) menuBar=\(attribute(app, kAXMenuBarAttribute) != nil)"
     }
     // Poll readiness only; this never sends an action or retries AXPress.
     func waitForContext(transitionPID: pid_t? = nil, allowWindowTransition: Bool = false, timeout: TimeInterval = 0.8) -> Bool {
@@ -382,6 +404,7 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     }
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { rows[row].enabled }
+    func tableView(_ tableView: NSTableView, shouldShowCellExpansionFor tableColumn: NSTableColumn?, row: Int) -> Bool { false }
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { rows[row].item == nil ? 8 : 28 }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectedRow() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -391,8 +414,7 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
         cell.shortcut.stringValue = rows[row].shortcut
         cell.shortcut.isEnabled = rows[row].enabled
         cell.imageView?.image = rows[row].item?.image
-        cell.toolTip = [rows[row].title, rows[row].shortcut].filter { !$0.isEmpty }.joined(separator: "    ")
-        cell.setAccessibilityLabel(cell.toolTip)
+        cell.setAccessibilityLabel([rows[row].title, rows[row].shortcut].filter { !$0.isEmpty }.joined(separator: "    "))
         return cell
     }
 
@@ -412,6 +434,8 @@ final class TabMenuResultCell: NSTableCellView {
         let label = NSTextField(labelWithString: "")
         label.font = .systemFont(ofSize: 13)
         label.lineBreakMode = .byTruncatingMiddle
+        label.allowsExpansionToolTips = false
+        shortcut.allowsExpansionToolTips = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         shortcut.font = .systemFont(ofSize: 13)
         shortcut.alignment = .right
@@ -515,19 +539,26 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         preparationTimeout = Task { [weak self] in
             do { try await Task.sleep(for: self?.preparationTimeoutDuration ?? .seconds(3)) } catch { return }
             guard let self, self.isPreparing else { return }
-            self.cancel(); self.notifyClosed(); self.onPreparationFailure?()
+            reader.queue.async {
+                let context = reader.contextDiagnostic()
+                Self.deliver {
+                    guard !self.closed else { return }
+                    self.failPreparation("focus-callback-timeout " + context)
+                }
+            }
         }
         focusBeforeRead { [weak self] in
             guard let self, !self.closed else { return }
             let transitionPID = self.transitionPID
             reader.queue.async { [weak self] in
                 let ready = reader.waitForContext(transitionPID: transitionPID, allowWindowTransition: true)
+                let context = ready ? "" : reader.contextDiagnostic()
                 let (nodes, complete) = ready ? reader.read() : ([], false)
                 Self.deliver {
                     guard let self, !self.closed else { return }
                     self.preparationTimeout?.cancel(); self.preparationTimeout = nil
                     guard ready else {
-                        self.cancel(); self.notifyClosed(); self.onPreparationFailure?(); return
+                        self.failPreparation("focus-verification " + context); return
                     }
                     self.setNodes(nodes, complete: complete)
                     self.isPreparing = false
@@ -537,6 +568,12 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                 }
             }
         }
+    }
+    private func failPreparation(_ context: String) {
+        cancel()
+        onInventory?(context)
+        notifyClosed()
+        onPreparationFailure?()
     }
     func present(at point: CGPoint, visibleFrame: CGRect) {
         guard !closed, canPresent() else { cancel(); notifyClosed(); return }
@@ -627,7 +664,6 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         item.keyEquivalentModifierMask = node.keyModifiers
         item.allowsAutomaticKeyEquivalentLocalization = false
         item.allowsAutomaticKeyEquivalentMirroring = false
-        item.toolTip = node.path.display + (node.shortcut.isEmpty ? "" : "    " + node.shortcut)
         if let symbol = AppCommandSymbol.name(path: node.path, isMenu: node.isMenu) {
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         } else if node.path.titles.count == 1, node.title == applicationName {
@@ -739,7 +775,8 @@ final class AppCommandsController {
         let reader = AppCommandReader(pid: active.processIdentifier, window: focused as! AXUIElement)
         reader.queue.async { [weak self] in
             let (nodes, complete) = reader.read()
-            let summary = "categories=\(nodes.count) complete=\(complete)\n" + nodes.map {
+            let context = reader.contextDiagnostic()
+            let summary = context + "\ncategories=\(nodes.count) complete=\(complete)\n" + nodes.map {
                 "\($0.title): commands=\($0.descendants.filter { !$0.isMenu }.count) enabled=\($0.enabled)"
             }.joined(separator: "\n")
             TabContextMenuSession.deliver {
@@ -774,7 +811,7 @@ final class AppCommandsController {
         session.execution?.focusWindow = focusWindow
         session.execution?.onStatus = { [weak self] status in self?.lastInventory += " execution=\(status)" }
         session.onPreparationFailure = { [weak self] in
-            self?.lastInventory = "Menu focus was not confirmed"
+            self?.lastInventory += " frontmostPID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)"
             let alert = NSAlert()
             alert.messageText = "Window Focus Not Confirmed"
             alert.informativeText = "Zonal could not verify focus on the clicked window. Reopen its tab menu."
