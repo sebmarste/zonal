@@ -1,5 +1,10 @@
 # Mac mini continuation
 
+Current app-command UI (2026-11-08): the user replaced the separate palette with
+a single native tab context menu. Search, Zonal actions and app categories are
+sections in that menu; upward opening reverses section order only. This supersedes
+the older palette wording below. See `docs/app-commands.md` for current behavior.
+
 Continue `origin/feature/main-stack-clock` (clock implementation: `62f1662`,
 based on `origin/main` at `f9e3102`). Fetch first, inspect checkout state, and
 preserve unrelated changes. Do the work natively on the Mac mini.

@@ -53,3 +53,26 @@ focus changes, shortcut modifiers and timeout/no-retry behavior. They do not nee
 live Accessibility permissions. Native app menu availability, search interaction,
 arrow navigation and actual command execution need separate live acceptance on
 the installed MacBook build.
+
+## Installed verification, 2026-11-08
+
+Source `d31f39a9be1b6dac5950d14431c5bca128f86048` passed `./scripts/check`:
+385 XCTest tests (10 skipped, zero failures) and 19 Python tests. Its universal
+Developer ID Release build was accepted under notarization submission
+`82877f18-543b-4fad-888c-86c29c02c2f6`, stapled, and passed strict/deep signature,
+ticket and Gatekeeper checks. Installed executable SHA-256 matches
+`39af7f50cc2772f56ada3d044d97862d5f0a0de6dcbd72c240da4a96afe56b2e`.
+All four runtime health flags were true, one process ran the installed path,
+and configuration bytes matched the pre-install backup. Rollback:
+`/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-native-menu-KNgGlwk5`.
+Artifact/provenance and evidence: `/private/tmp/zonal-native-app-menu/`.
+
+The installed read-only `app-menus` query returned a complete real Ardia inventory:
+11 enabled categories (Apple, Ardia, File, Edit, View, Tabs, Bookmarks, History,
+Extensions, Window, Help). The user then confirmed **“Sections and search work”**
+from the actual tab context menu. The user then selected Ardia’s Find command and
+confirmed **“Find opens and the menu closes.”** A subsequent diagnostic read
+reported `categories=11 commands=252 complete=true`, with all doctor findings OK.
+This confirms native sections, inline search and a harmless app command executing
+through the real context menu. Focus-change cancellation and other applications
+remain separately bounded by fixtures/source checks rather than live acceptance.
