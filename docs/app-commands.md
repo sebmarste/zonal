@@ -105,8 +105,10 @@ finding was OK, and configuration matched the pre-install backup after startup.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-stable-menu-3RPppA6e`.
 Artifact/provenance and retained checks: `/private/tmp/zonal-stable-app-menu/`.
 
-Live interaction acceptance for this stability update is pending. The immediate
-post-install desktop inventory had zero tracked windows and returned
-`categories=0 complete=false`; that is not menu-availability or interaction
-success. The user has been asked to focus Ardia and check the upward menu,
-first-result selection, and Return dispatch on the installed build.
+On the installed MacBook build, the user checked Ardia's bottom-tab menu with
+“find” and confirmed **“Stable; selection and Return work.”** This supplies live
+acceptance for upward-menu stability, visible initial selection, and Return
+execution. The immediate post-install inventory (`categories=0 complete=false`)
+was inconclusive; the later user interaction is the evidence for this case.
+Focus-change cancellation and other applications still lack separate live
+acceptance.

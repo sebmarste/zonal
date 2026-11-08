@@ -9,8 +9,9 @@ Stability follow-up `18d778a` is signed/notarized and installed on the MacBook:
 fresh AX snapshot before opening, no late menu mutation, fixed search height,
 explicit enabled-result selection, no Apple category or dynamic-items hint.
 392 XCTest tests (10 skipped) and 19 Python tests passed. Installed executable
-and health were verified; upward-menu/Return acceptance is pending an active
-readable desktop. Evidence and rollback are in `docs/app-commands.md`.
+and health were verified. The user confirmed the installed Ardia bottom-tab menu:
+“Stable; selection and Return work.” Evidence and rollback are in
+`docs/app-commands.md`.
 
 Continue `origin/feature/main-stack-clock` (clock implementation: `62f1662`,
 based on `origin/main` at `f9e3102`). Fetch first, inspect checkout state, and
