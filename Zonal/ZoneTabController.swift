@@ -828,14 +828,7 @@ final class ZoneTabNativeButton: NSButton {
         guard let menu = makeContextMenu() else { return }
         if let session = menu.delegate as? TabContextMenuSession {
             let visibleFrame = window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
-            session.prepare {
-                let menu = session.menu
-                guard session.canPresent() else { return }
-                session.opensUpward = TabContextMenuPolicy.opensUpward(at: point,
-                    visibleFrame: visibleFrame, menuHeight: menu.size.height)
-                session.rebuild()
-                menu.popUp(positioning: session.opensUpward ? menu.items.last : menu.items.first, at: point, in: nil)
-            }
+            session.prepare { session.present(at: point, visibleFrame: visibleFrame) }
         } else { menu.popUp(positioning: nil, at: point, in: nil) }
     }
     override func menu(for event: NSEvent) -> NSMenu? { makeContextMenu() }

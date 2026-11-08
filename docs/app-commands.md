@@ -35,10 +35,21 @@ menu is excluded. Empty AX submenus are unavailable; Zonal does not press a
 command to force population, and there is no dynamic-items hint.
 
 Search stays inside the same native menu in a scrollable result area with explicit
-selection. Its height matches the unfiltered menu so the Search row stays at the
-opening point even when results change. No-match and disabled rows cannot execute.
+selection. Its height fits the result count, with scrolling capped at 420 points
+or the available screen space. The same Search row stays at the original tab
+anchor in either direction. AppKit does not support resizing custom item views
+during tracking, so query changes end that tracking pass and re-present the same
+snapshot at the original anchor. They do not trigger another AX scan. Return
+always uses the latest query, including input received during that transition.
+No-match and disabled rows cannot execute.
 Typing during the bounded preparation is buffered for the menu; Escape cancels.
 A changed app/window cancels preparation before a stale menu can appear.
+
+Zonal action icons are preserved in both the native menu and search results.
+Recognized app categories and individual commands use standard SF Symbols; the
+app category can use its application icon. Unknown command titles remain without
+an icon. These presentation hints do not change command identity or targeting;
+Zonal does not extract another app's private NSMenuItem artwork.
 
 Before one AXPress, execution revalidates the active app, original AX window,
 category/path, exact retained command element, enabled state (including parents),
@@ -55,7 +66,8 @@ also retain the most recent menu inventory summary.
 
 Deterministic fixtures cover section reversal without reversing contents, native
 submenus, full-path search, preserved Zonal actions, missing container AXEnabled,
-stable search height in either direction, snapshot immutability during tracking,
+content-sized search height/caps in either direction, anchored tracking transitions,
+snapshot immutability during tracking,
 Apple exclusion, automatic enabled-result selection, arrow navigation, exactly-once
 Return dispatch, command enabled state, exact duplicate identities, stale/replaced references,
 focus changes, shortcut modifiers and timeout/no-retry behavior. They do not need
@@ -112,3 +124,20 @@ execution. The immediate post-install inventory (`categories=0 complete=false`)
 was inconclusive; the later user interaction is the evidence for this case.
 Focus-change cancellation and other applications still lack separate live
 acceptance.
+
+
+## Non-focused window menus: proposed behavior
+
+Application menus and their enabled state reflect an app's current command
+context, not an arbitrary background document. The reliable extension is to
+focus the exact clicked window using Zonal's existing focus path, wait for
+verified app/window focus, then capture its menu snapshot. Execution would keep
+the existing final identity/enabled-state checks and no-retry behavior. This
+would make right-click focus that window and needs separate tests for same-app
+siblings, cross-app focus changes, focus failure and cancellation, plus live
+acceptance. It is proposed, not implemented in the appearance update.
+
+A cached background preview could avoid focus at opening, but its commands and
+enabled state would be provisional. Selecting a command would still need focus,
+fresh discovery and revalidation. General commands that leave the window in the
+background are not guaranteed by the current AX menu path.

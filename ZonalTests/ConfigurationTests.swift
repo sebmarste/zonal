@@ -876,21 +876,35 @@ extension ConfigurationTests {
     }
 
     @MainActor
-    func testSearchPreservesMenuHeightAndOpeningAnchorInBothDirections() throws {
+    func testSearchHeightFitsResultsAndCapsLongListsInBothDirections() throws {
         let fixture = CommandMenuFixture()
         for upward in [false, true] {
             let root = NSMenu()
-            root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+            for title in ["Fit to Zone", "Move Left", "Move Right", "Close Window"] {
+                root.addItem(ZoneTabMenuItem(title: title) {})
+            }
             let session = TabContextMenuSession(menu: root, reader: fixture.reader)
             session.opensUpward = upward
             session.setNodes(fixture.reader.read().0, complete: false)
             let height = root.size.height
             let anchor = upward ? root.items.last : root.items.first
-            for query in ["duplicate", "fit", "no such command", ""] {
+            session.setQuery("file duplicate")
+            XCTAssertEqual(session.results.frame.height, 56)
+            XCTAssertLessThan(root.size.height, height)
+            let twoResultsHeight = root.size.height
+            for query in ["fit", "no such command"] {
                 session.setQuery(query)
-                XCTAssertEqual(root.size.height, height, accuracy: 0.5, "query=\(query) upward=\(upward)")
+                XCTAssertEqual(session.results.frame.height, 28)
+                XCTAssertLessThan(root.size.height, twoResultsHeight)
                 XCTAssertTrue((upward ? root.items.last : root.items.first) === anchor)
             }
+            session.maximumResultsHeight = 28
+            session.setQuery("file duplicate")
+            XCTAssertEqual(session.results.contentHeight, 56)
+            XCTAssertEqual(session.results.frame.height, 28)
+            XCTAssertNotNil(session.results.selectedItem)
+            session.setQuery("")
+            XCTAssertEqual(root.size.height, height, accuracy: 0.5)
             XCTAssertFalse(root.items.contains { $0.title.localizedCaseInsensitiveContains("dynamic") })
         }
     }
@@ -989,5 +1003,129 @@ extension ConfigurationTests {
         await fulfillment(of: [closed], timeout: 3)
         XCTAssertFalse(session.isPreparing)
         XCTAssertFalse(session.isTracking)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testDynamicSearchReopensFrozenMenuAtSameAnchorWithoutEndingSession() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let root = NSMenu()
+            for title in ["Fit to Zone", "Move Left", "Move Right", "Close Window"] {
+                root.addItem(ZoneTabMenuItem(title: title) {})
+            }
+            let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+            var inventoryUpdates = 0
+            session.onInventory = { _ in inventoryUpdates += 1 }
+            session.setNodes(fixture.reader.read().0, complete: true)
+            let point = CGPoint(x: 200, y: upward ? 5 : 795)
+            var heights: [CGFloat] = []
+            var closes = 0
+            session.onClose = { closes += 1 }
+            let queries: [String?] = ["file duplicate", "fit", "", nil]
+            session.popUp = { [weak session] menu, anchor, actualPoint in
+                guard let session else { XCTFail("Session lost"); return }
+                XCTAssertEqual(actualPoint, point)
+                XCTAssertEqual(session.opensUpward, upward)
+                XCTAssertTrue(anchor === (upward ? menu.items.last : menu.items.first))
+                heights.append(menu.size.height)
+                session.menuWillOpen(menu)
+                if let query = queries[heights.count - 1] {
+                    let before = menu.items.map(ObjectIdentifier.init)
+                    session.setQuery(query)
+                    XCTAssertEqual(menu.items.map(ObjectIdentifier.init), before)
+                }
+                session.menuDidClose(menu)
+            }
+            session.present(at: point, visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+            XCTAssertEqual(heights.count, 4)
+            XCTAssertLessThan(heights[1], heights[0])
+            XCTAssertLessThan(heights[2], heights[1])
+            XCTAssertEqual(heights[3], heights[0])
+            XCTAssertEqual(inventoryUpdates, 1)
+            XCTAssertEqual(closes, 1)
+            XCTAssertTrue(fixture.presses.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testQueryReopenStopsIfCapturedContextChanges() {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var current = true
+        var opens = 0
+        var closes = 0
+        session.canPresent = { current }
+        session.onClose = { closes += 1 }
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            session.setQuery("find")
+            current = false
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(closes, 1)
+        XCTAssertFalse(session.isTracking)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testCommandIconsSurviveSearchAndAppearInResultCells() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        fit.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)
+        root.addItem(fit)
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        XCTAssertNotNil(root.items.first { $0.submenu != nil }?.image)
+        XCTAssertTrue(try XCTUnwrap(root.items.first { $0.submenu != nil }?.submenu).items.allSatisfy { $0.image != nil })
+        session.setQuery("file duplicate")
+        let result = try XCTUnwrap(session.results.selectedItem)
+        let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0) as? NSTableCellView)
+        XCTAssertNotNil(result.image)
+        XCTAssertTrue(cell.imageView?.image === result.image)
+        session.setQuery("fit")
+        XCTAssertTrue(session.results.selectedItem === fit)
+        XCTAssertTrue(session.results.selectedItem?.image === fit.image)
+        XCTAssertEqual(AppCommandSymbol.name(path: .init(indices: [], titles: ["Edit", "Find…"]), isMenu: false), "magnifyingglass")
+        XCTAssertNil(AppCommandSymbol.name(path: .init(indices: [], titles: ["File", "Unrecognized action"]), isMenu: false))
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testFastQueryAndReturnUsesLatestResultsBeforeMenuReopens() async throws {
+        let fixture = CommandMenuFixture()
+        let pressed = expectation(description: "Latest search result executes")
+        fixture.onPress = { pressed.fulfill() }
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        var opens = 0
+        var closes = 0
+        session.onClose = { closes += 1 }
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            session.setQuery("does not match")
+            session.setQuery("file duplicate")
+            session.input(key: 125, text: nil, flags: [])
+            session.input(key: 36, text: nil, flags: [])
+            session.input(key: 36, text: nil, flags: [])
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        await fulfillment(of: [pressed], timeout: 3)
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(closes, 1)
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.presses.first), fixture.second))
     }
 }

@@ -148,6 +148,29 @@ struct TabContextMenuPolicy {
     }
 }
 
+// These are presentation hints only; command identity always uses the full AX path.
+struct AppCommandSymbol {
+    static func name(path: AppCommandPath, isMenu: Bool) -> String? {
+        let title = (path.titles.last ?? "").lowercased()
+            .replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let categories = ["file": "doc", "edit": "pencil", "view": "eye", "window": "macwindow",
+            "help": "questionmark.circle", "history": "clock.arrow.circlepath", "bookmarks": "bookmark",
+            "tabs": "square.on.square", "extensions": "puzzlepiece.extension", "tools": "wrench.and.screwdriver",
+            "format": "textformat", "go": "arrow.right"]
+        if isMenu, let symbol = categories[title] { return symbol }
+        return ["find": "magnifyingglass", "find next": "arrow.down", "find previous": "arrow.up",
+            "copy": "doc.on.doc", "cut": "scissors", "paste": "doc.on.clipboard",
+            "undo": "arrow.uturn.backward", "redo": "arrow.uturn.forward", "select all": "checkmark.square",
+            "open": "folder", "save": "square.and.arrow.down", "save as": "square.and.arrow.down",
+            "print": "printer", "duplicate": "plus.square.on.square", "delete": "trash",
+            "new tab": "plus.square", "new window": "macwindow.badge.plus", "close tab": "xmark",
+            "close window": "xmark", "settings": "gearshape", "preferences": "gearshape",
+            "reload": "arrow.clockwise", "reload this page": "arrow.clockwise",
+            "zoom in": "plus.magnifyingglass", "zoom out": "minus.magnifyingglass"][title]
+    }
+}
+
 // Native custom menu views do not receive normal menu typing. Keep text filtering
 // on the existing input tap; AppKit retains unfiltered navigation and submenus.
 final class TabMenuSearchField: NSSearchField {
@@ -175,6 +198,7 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     let table: NSTableView = Table()
     private(set) var rows: [Row] = []
     var activate: ((NSMenuItem) -> Void)?
+    var contentHeight: CGFloat { rows.reduce(0) { $0 + ($1.item == nil ? 8 : 28) } }
     var selectedItem: NSMenuItem? {
         rows.indices.contains(table.selectedRow) ? rows[table.selectedRow].item : nil
     }
@@ -210,6 +234,10 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
         if let first = rows.firstIndex(where: \.enabled) { select(first) }
         else { table.deselectAll(nil) }
     }
+    func fit(maximumHeight: CGFloat) {
+        frame.size.height = min(maximumHeight, contentHeight)
+        if table.selectedRow >= 0 { table.scrollRowToVisible(table.selectedRow) }
+    }
     private func select(_ index: Int) {
         table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         table.scrollRowToVisible(index)
@@ -236,8 +264,12 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
         label.lineBreakMode = .byTruncatingMiddle
         label.toolTip = rows[row].title
         let cell = NSTableCellView(frame: NSRect(x: 0,y: 0,width: tableView.bounds.width,height: 28))
-        label.frame = cell.bounds.insetBy(dx: 12, dy: 5)
+        let icon = NSImageView(frame: NSRect(x: 10, y: 6, width: 16, height: 16))
+        icon.image = rows[row].item?.image
+        icon.imageScaling = .scaleProportionallyDown
+        label.frame = NSRect(x: 34, y: 5, width: max(0, cell.bounds.width - 46), height: 18)
         label.autoresizingMask = [.width]
+        cell.addSubview(icon); cell.imageView = icon
         cell.addSubview(label); cell.textField = label
         return cell
     }
@@ -254,7 +286,15 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     private let resultsItem = NSMenuItem()
     private var nodes: [AppCommandNode] = []
     private var closed = false
-    private var browseHeight: CGFloat?
+    private var reopenAfterQuery = false
+    private var didNotifyClose = false
+    private var applicationName: String?
+    private var applicationIcon: NSImage?
+    var maximumResultsHeight: CGFloat = 420
+    // Injection keeps anchoring and tracking transitions testable without a live GUI.
+    var popUp: (NSMenu, NSMenuItem?, CGPoint) -> Void = { menu, item, point in
+        menu.popUp(positioning: item, at: point, in: nil)
+    }
     private(set) var isTracking = false
     private(set) var isPreparing = false
     var opensUpward = false
@@ -267,9 +307,11 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     var canPresent: () -> Bool = { true }
     private(set) var unavailableReason: String
 
-    init(menu: NSMenu, reader: AppCommandReader?, unavailableReason: String = "App commands require the focused window") {
+    init(menu: NSMenu, reader: AppCommandReader?, application: NSRunningApplication? = nil, unavailableReason: String = "App commands require the focused window") {
         self.menu = menu
         self.reader = reader
+        applicationName = application?.localizedName
+        applicationIcon = application?.icon
         self.unavailableReason = unavailableReason
         zonalItems = menu.items.filter { !$0.isSeparatorItem }
         super.init()
@@ -306,24 +348,42 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                 self.setNodes(nodes, complete: complete)
                 self.isPreparing = false
                 self.onQueryChanged?()
-                guard self.canPresent() else { self.cancel(); self.onClose?(); return }
+                guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
                 completion()
             }
         }
     }
+    func present(at point: CGPoint, visibleFrame: CGRect) {
+        guard !closed, canPresent() else { cancel(); notifyClosed(); return }
+        opensUpward = TabContextMenuPolicy.opensUpward(at: point, visibleFrame: visibleFrame, menuHeight: menu.size.height)
+        let space = opensUpward ? visibleFrame.maxY - point.y : point.y - visibleFrame.minY
+        maximumResultsHeight = min(420, max(28, space - 80))
+        repeat {
+            reopenAfterQuery = false
+            rebuild()
+            popUp(menu, opensUpward ? menu.items.last : menu.items.first, point)
+            // AppKit does not support resizing custom item views while tracking.
+            // End that pass, then re-present the same snapshot at the original anchor.
+        } while reopenAfterQuery && !closed && canPresent()
+        if !closed { cancel(); notifyClosed() }
+    }
     func setQuery(_ value: String) {
-        guard !closed else { return }
+        guard !closed, query != value else { return }
         query = value
         search.stringValue = value
-        rebuild()
         onQueryChanged?()
+        if isTracking {
+            // Keep Return bound to the latest query even before the tracking pass ends.
+            if !query.isEmpty { updateResults() }
+            reopenAfterQuery = true
+            menu.cancelTracking()
+        } else { rebuild() }
     }
     func setNodes(_ value: [AppCommandNode], complete: Bool) {
         // The menu is a frozen snapshot while tracking: no loading-induced resize,
         // scroll changes, replaced mouse targets, or lost keyboard selection.
         guard !closed, !isTracking else { return }
         nodes = value.filter { !$0.isAppleMenu }
-        browseHeight = nil
         onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
         rebuild()
     }
@@ -336,17 +396,24 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         }
     }
     func rebuild() {
+        guard !isTracking else { return }
         menu.removeAllItems()
-        if query.isEmpty || browseHeight == nil {
+        if query.isEmpty {
             var app = nodes.map { item(for: $0, fullPath: false) }
             if reader == nil { app = [info(unavailableReason)] }
             else if app.isEmpty { app = [info("App did not expose any menus")] }
             appendSections([.search: [searchItem], .zonal: zonalItems, .app: app])
             menu.update()
-            browseHeight = menu.size.height
-            if query.isEmpty { return }
-            menu.removeAllItems()
+            return
         }
+        updateResults()
+        results.fit(maximumHeight: maximumResultsHeight)
+        // The presenter anchors the Search row again after every filtering pass.
+        if opensUpward { menu.addItem(resultsItem); menu.addItem(.separator()); menu.addItem(searchItem) }
+        else { menu.addItem(searchItem); menu.addItem(.separator()); menu.addItem(resultsItem) }
+        menu.update()
+    }
+    private func updateResults() {
         let zonal = zonalItems.filter { matches($0.title) }
         let app = nodes.flatMap { [$0] + $0.descendants }
             .filter { !$0.isMenu && matches($0.path.display + " " + $0.shortcut) }
@@ -359,12 +426,6 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         }
         if rows.isEmpty { rows = [.init(item: info("No matching commands"))] }
         results.setRows(rows)
-        results.frame.size.height = 24
-        // Preserve the exact menu height and Search-row anchor while filtering.
-        if opensUpward { menu.addItem(resultsItem); menu.addItem(.separator()); menu.addItem(searchItem) }
-        else { menu.addItem(searchItem); menu.addItem(.separator()); menu.addItem(resultsItem) }
-        results.frame.size.height = max(24, 24 + (browseHeight ?? menu.size.height) - menu.size.height)
-        menu.update()
     }
     private func item(for node: AppCommandNode, fullPath: Bool) -> NSMenuItem {
         let title = (fullPath ? node.path.display : node.title) + (node.shortcut.isEmpty ? "" : "    " + node.shortcut)
@@ -388,6 +449,11 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             }
         }
         item.isEnabled = node.enabled
+        if let symbol = AppCommandSymbol.name(path: node.path, isMenu: node.isMenu) {
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        } else if node.path.titles.count == 1, node.title == applicationName {
+            item.image = applicationIcon
+        }
         if node.isMenu {
             let submenu = NSMenu(title: node.title)
             submenu.autoenablesItems = false
@@ -408,16 +474,26 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         isTracking = true; onOpen?()
     }
     func menuDidClose(_ menu: NSMenu) {
-        if menu === self.menu { closed = true; isTracking = false; onClose?() }
+        guard menu === self.menu else { return }
+        isTracking = false
+        if !reopenAfterQuery { closed = true; notifyClosed() }
     }
-    func cancel() { closed = true; isPreparing = false; isTracking = false; menu.cancelTracking() }
+    private func notifyClosed() {
+        guard !didNotifyClose else { return }
+        didNotifyClose = true; onClose?()
+    }
+    func cancel() {
+        closed = true; isPreparing = false; isTracking = false; reopenAfterQuery = false
+        menu.cancelTracking()
+    }
     private func activate(_ item: NSMenuItem) {
         guard !closed, item.isEnabled, item.action != nil else { return }
         // Capture the exact handler before menu dismissal releases its weak target.
         let target = item.target
         let action = item.action
-        closed = true
+        closed = true; reopenAfterQuery = false
         menu.cancelTracking()
+        notifyClosed()
         DispatchQueue.main.async {
             if let command = item as? ZoneTabMenuItem { command.invoke() }
             else if let action { NSApp.sendAction(action, to: target, from: item) }
@@ -426,7 +502,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     func input(key: Int64, text: String?, flags: CGEventFlags) {
         guard !closed else { return }
         if key == 53 {
-            if isPreparing { cancel(); onClose?() }
+            if isPreparing { cancel(); notifyClosed() }
             else { setQuery("") }
             return
         }
@@ -491,7 +567,7 @@ final class AppCommandsController {
         let valid = active == targetPID && focused.map { CFEqual($0, expectedWindow) } == true
         lastInventory = valid ? "Reading app menus" : "Context unavailable: activePID=\(active ?? 0) targetPID=\(targetPID) focusedWindow=\(focused != nil)"
         let reader = valid ? AppCommandReader(pid: targetPID, window: expectedWindow) : nil
-        let session = TabContextMenuSession(menu: menu, reader: reader)
+        let session = TabContextMenuSession(menu: menu, reader: reader, application: valid ? NSRunningApplication(processIdentifier: targetPID) : nil)
         self.session = session
         pid = targetPID
         session.canPresent = { [weak self, weak session] in
