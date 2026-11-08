@@ -876,6 +876,7 @@ final class ZoneTabNativeButton: NSButton {
 
 // Keep the selected window and action alive even if the tab redraws while the menu is open.
 final class ZoneTabMenuItem: NSMenuItem {
+    var displayedShortcut = ""
     private let actionHandler: () -> Void
 
     init(title: String, actionHandler: @escaping () -> Void) {

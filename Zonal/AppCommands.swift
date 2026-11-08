@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 
 // Paths include sibling positions and titles: duplicate labels never select each other.
 struct AppCommandPath: Equatable, Sendable {
@@ -27,6 +28,8 @@ struct AppCommandNode: Identifiable, @unchecked Sendable {
     var shortcut: String
     var children: [AppCommandNode]
     var isMenu: Bool
+    var keyEquivalent = ""
+    var keyModifiers: NSEvent.ModifierFlags = []
     var id: [Int] { path.indices }
     var title: String { path.titles.last ?? "" }
     var isAppleMenu: Bool { path.titles.count == 1 && ["Apple", "\u{F8FF}"].contains(title) }
@@ -109,7 +112,9 @@ final class AppCommandReader: @unchecked Sendable {
                 let nested = menu && recursive ? descend(child, path: next, depth: depth + 1, ancestorsEnabled: enabled) : []
                 if menu && recursive && nested.isEmpty { complete = false }
                 result.append(AppCommandNode(path: next, element: child, enabled: enabled,
-                                             shortcut: shortcut, children: nested, isMenu: menu))
+                                             shortcut: shortcut, children: nested, isMenu: menu,
+                                             keyEquivalent: Self.shortcutKey(character: character, glyph: glyph).key,
+                                             keyModifiers: Self.shortcutModifiers(mods)))
             }
             return result
         }
@@ -130,9 +135,40 @@ final class AppCommandReader: @unchecked Sendable {
         }
         return (nodes, complete)
     }
-    static func glyph(_ value: Int) -> String {
-        [9: "⇥", 10: "⇤", 11: "↩", 23: "⌫", 27: "⎋", 28: "←", 29: "→", 30: "↑", 31: "↓", 98: "⇞", 99: "⇟", 115: "↖", 119: "↘" ][value] ?? (value == 0 ? "" : "[key \(value)]")
+    static func shortcutModifiers(_ value: Int) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if value & 1 != 0 { flags.insert(.shift) }
+        if value & 2 != 0 { flags.insert(.option) }
+        if value & 4 != 0 { flags.insert(.control) }
+        if value & 8 == 0 { flags.insert(.command) }
+        return flags
     }
+    static func shortcutKey(character: String, glyph: Int) -> (key: String, display: String) {
+        if !character.isEmpty { return (character.lowercased(), character.uppercased()) }
+        let function: Int?
+        switch glyph {
+        case Int(kMenuF1Glyph)...Int(kMenuF12Glyph): function = glyph - Int(kMenuF1Glyph) + 1
+        case Int(kMenuF13Glyph)...Int(kMenuF15Glyph): function = glyph - Int(kMenuF13Glyph) + 13
+        case Int(kMenuF16Glyph)...Int(kMenuF19Glyph): function = glyph - Int(kMenuF16Glyph) + 16
+        default: function = nil
+        }
+        if let function { return (String(UnicodeScalar(0xF704 + function - 1)!), "F\(function)") }
+        // Carbon menu glyph IDs differ from key codes and Unicode characters.
+        let keys: [Int: (UInt32, String)] = [
+            Int(kMenuTabRightGlyph): (0x09, "⇥"), Int(kMenuTabLeftGlyph): (0x19, "⇤"),
+            Int(kMenuEnterGlyph): (0x03, "⌤"), Int(kMenuReturnGlyph): (0x0D, "↩"),
+            Int(kMenuReturnR2LGlyph): (0x0D, "↩"), Int(kMenuNonmarkingReturnGlyph): (0x0D, "↩"),
+            Int(kMenuSpaceGlyph): (0x20, "Space"), Int(kMenuDeleteLeftGlyph): (0x08, "⌫"),
+            Int(kMenuDeleteRightGlyph): (0x7F, "⌦"), Int(kMenuEscapeGlyph): (0x1B, "⎋"),
+            Int(kMenuClearGlyph): (0xF739, "⌧"), Int(kMenuLeftArrowGlyph): (0xF702, "←"),
+            Int(kMenuRightArrowGlyph): (0xF703, "→"), Int(kMenuUpArrowGlyph): (0xF700, "↑"),
+            Int(kMenuDownArrowGlyph): (0xF701, "↓"), Int(kMenuPageUpGlyph): (0xF72C, "⇞"),
+            Int(kMenuPageDownGlyph): (0xF72D, "⇟"), Int(kMenuNorthwestArrowGlyph): (0xF729, "↖"),
+            Int(kMenuSoutheastArrowGlyph): (0xF72B, "↘"), Int(kMenuHelpGlyph): (0xF746, "Help")]
+        if let (scalar, display) = keys[glyph] { return (String(UnicodeScalar(scalar)!), display) }
+        return ("", glyph == 0 ? "" : glyph == Int(kMenuCapsLockGlyph) ? "⇪" : "[key \(glyph)]")
+    }
+    static func glyph(_ value: Int) -> String { shortcutKey(character: "", glyph: value).display }
     func execute(_ node: AppCommandNode) -> String? {
         guard contextIsCurrent() else { return "The focused window changed. Reopen the window menu." }
         let (roots, _) = read(categoriesOnly: true)
@@ -232,6 +268,23 @@ struct AppCommandSymbol {
     }
 }
 
+@MainActor
+struct TabMenuAppearance {
+    static let iconSize = NSSize(width: 16, height: 16)
+    static func icon(_ source: NSImage?) -> NSImage? {
+        guard let source, source.size.width > 0, source.size.height > 0 else { return nil }
+        let scale = min(iconSize.width / source.size.width, iconSize.height / source.size.height)
+        let size = NSSize(width: source.size.width * scale, height: source.size.height * scale)
+        let image = NSImage(size: iconSize, flipped: false) { bounds in
+            source.draw(in: NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
+                                   width: size.width, height: size.height))
+            return true
+        }
+        image.isTemplate = source.isTemplate
+        return image
+    }
+}
+
 // Native custom menu views do not receive normal menu typing. Keep text filtering
 // on the existing input tap; AppKit retains unfiltered navigation and submenus.
 final class TabMenuSearchField: NSSearchField {
@@ -252,6 +305,7 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     struct Row {
         var item: NSMenuItem?
         var title: String { item?.title ?? "" }
+        var shortcut: String { (item as? ZoneTabMenuItem)?.displayedShortcut ?? "" }
         var enabled: Bool { item?.isEnabled == true && item?.action != nil }
     }
     private final class Table: NSTableView {
@@ -331,21 +385,56 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { rows[row].item == nil ? 8 : 28 }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectedRow() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let label = NSTextField(labelWithString: rows[row].title)
-        label.font = .systemFont(ofSize: 13)
-        label.textColor = rows[row].enabled ? .labelColor : .disabledControlTextColor
-        label.lineBreakMode = .byTruncatingMiddle
-        label.toolTip = rows[row].title
-        let cell = NSTableCellView(frame: NSRect(x: 0,y: 0,width: tableView.bounds.width,height: 28))
-        let icon = NSImageView(frame: NSRect(x: 10, y: 6, width: 16, height: 16))
-        icon.image = rows[row].item?.image
-        icon.imageScaling = .scaleProportionallyDown
-        label.frame = NSRect(x: 34, y: 5, width: max(0, cell.bounds.width - 46), height: 18)
-        label.autoresizingMask = [.width]
-        cell.addSubview(icon); cell.imageView = icon
-        cell.addSubview(label); cell.textField = label
+        let cell = TabMenuResultCell(frame: NSRect(x: 0, y: 0, width: tableView.bounds.width, height: 28))
+        cell.textField?.stringValue = rows[row].title
+        cell.textField?.textColor = rows[row].enabled ? .labelColor : .disabledControlTextColor
+        cell.shortcut.stringValue = rows[row].shortcut
+        cell.shortcut.isEnabled = rows[row].enabled
+        cell.imageView?.image = rows[row].item?.image
+        cell.toolTip = [rows[row].title, rows[row].shortcut].filter { !$0.isEmpty }.joined(separator: "    ")
+        cell.setAccessibilityLabel(cell.toolTip)
         return cell
     }
+
+}
+
+@MainActor
+final class TabMenuResultCell: NSTableCellView {
+    let shortcut = NSTextField(labelWithString: "")
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { shortcut.textColor = backgroundStyle == .emphasized ? .alternateSelectedControlTextColor : .secondaryLabelColor }
+    }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let icon = NSImageView()
+        icon.imageScaling = .scaleProportionallyDown
+        icon.setAccessibilityElement(false)
+        let label = NSTextField(labelWithString: "")
+        label.font = .systemFont(ofSize: 13)
+        label.lineBreakMode = .byTruncatingMiddle
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        shortcut.font = .systemFont(ofSize: 13)
+        shortcut.alignment = .right
+        shortcut.textColor = .secondaryLabelColor
+        shortcut.setContentCompressionResistancePriority(.required, for: .horizontal)
+        shortcut.setContentHuggingPriority(.required, for: .horizontal)
+        for view in [icon, label, shortcut] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        imageView = icon; textField = label
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            icon.widthAnchor.constraint(equalToConstant: 16), icon.heightAnchor.constraint(equalToConstant: 16),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: shortcut.leadingAnchor, constant: -16),
+            shortcut.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            shortcut.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 @MainActor
@@ -396,6 +485,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         self.unavailableReason = unavailableReason
         zonalItems = menu.items.filter { !$0.isSeparatorItem }
         super.init()
+        for item in zonalItems { item.image = TabMenuAppearance.icon(item.image) }
         menu.removeAllItems()
         menu.autoenablesItems = false
         menu.minimumWidth = 320
@@ -523,7 +613,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         results.setRows(rows)
     }
     private func item(for node: AppCommandNode, fullPath: Bool) -> NSMenuItem {
-        let title = (fullPath ? node.path.display : node.title) + (node.shortcut.isEmpty ? "" : "    " + node.shortcut)
+        let title = fullPath ? node.path.display : node.title
         let execution = self.execution
         let root = menu
         let item = ZoneTabMenuItem(title: title) { [weak root] in
@@ -532,11 +622,18 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             DispatchQueue.main.async { execution.execute(node) }
         }
         item.isEnabled = node.enabled
+        item.displayedShortcut = node.shortcut
+        item.keyEquivalent = node.keyEquivalent
+        item.keyEquivalentModifierMask = node.keyModifiers
+        item.allowsAutomaticKeyEquivalentLocalization = false
+        item.allowsAutomaticKeyEquivalentMirroring = false
+        item.toolTip = node.path.display + (node.shortcut.isEmpty ? "" : "    " + node.shortcut)
         if let symbol = AppCommandSymbol.name(path: node.path, isMenu: node.isMenu) {
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         } else if node.path.titles.count == 1, node.title == applicationName {
             item.image = applicationIcon
         }
+        item.image = TabMenuAppearance.icon(item.image)
         if node.isMenu {
             let submenu = NSMenu(title: node.title)
             submenu.autoenablesItems = false

@@ -7,8 +7,9 @@ commands show icons, and Zonal action icons survive search. User-authorized
 right-click focuses the exact target window before reading its menus; command
 execution handles menu focus settling and rejects external/sibling context.
 402 XCTest tests (10 skipped) and 19 Python tests passed. Installed executable,
-permissions, mapped process, UW and preserved settings were verified. Live
-height/icons and cross-app right-click/Find acceptance are pending; see
+permissions, mapped process, UW and preserved settings were verified. The user
+confirmed cross-app right-click/Find: “Window focuses and Find opens.” Icon size,
+spacing and shortcut columns have a follow-up appearance change; see
 `docs/app-commands.md` for artifact and rollback evidence.
 
 Current app-command UI (2026-11-08): the user replaced the separate palette with

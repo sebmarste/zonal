@@ -831,7 +831,7 @@ extension ConfigurationTests {
         session.setQuery("file duplicate")
         let results = session.results.rows.compactMap(\.item).filter { $0.isEnabled && $0.action != nil }
         XCTAssertEqual(results.count, 2)
-        XCTAssertTrue(results.allSatisfy { $0.title.contains("File › Duplicate") && $0.title.contains("⌥⇧⌘D") })
+        XCTAssertTrue(results.allSatisfy { $0.title == "File › Duplicate" && ($0 as? ZoneTabMenuItem)?.displayedShortcut == "⌥⇧⌘D" })
         session.setQuery("fit")
         XCTAssertEqual(session.results.selectedItem?.title, "Fit to Zone")
         session.setQuery("")
@@ -1226,5 +1226,97 @@ extension ConfigurationTests {
         XCTAssertEqual(cancellations, 1)
         XCTAssertFalse(session.isPreparing)
         XCTAssertTrue(fixture.presses.isEmpty)
+    }
+}
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuIconsShareCanvasWithoutMutatingSourcesOrStretching() throws {
+        let wide = NSImage(size: NSSize(width: 20, height: 10), flipped: false) { bounds in
+            NSColor.red.setFill(); bounds.fill(); return true
+        }
+        let app = NSImage(size: NSSize(width: 1024, height: 1024))
+        let symbol = try XCTUnwrap(NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil))
+        let images = try [wide, app, symbol].map { try XCTUnwrap(TabMenuAppearance.icon($0)) }
+        XCTAssertTrue(images.allSatisfy { $0.size == NSSize(width: 16, height: 16) })
+        XCTAssertEqual(app.size, NSSize(width: 1024, height: 1024))
+        XCTAssertEqual(wide.size, NSSize(width: 20, height: 10))
+        XCTAssertEqual(images[2].isTemplate, symbol.isTemplate)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(images[0].tiffRepresentation)))
+        XCTAssertGreaterThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)).alphaComponent, 0.95)
+        XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: 0)).alphaComponent, 0.01)
+        XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh - 1)).alphaComponent, 0.01)
+    }
+
+    @MainActor
+    func testNativeMenuUsesSeparateShortcutMetadataAndUniformIconCanvases() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        fit.image = NSImage(size: NSSize(width: 20, height: 14))
+        root.addItem(fit)
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(root.items.first { $0.submenu != nil })
+        XCTAssertEqual(category.image?.size, fit.image?.size)
+        XCTAssertEqual(fit.image?.size, NSSize(width: 16, height: 16))
+        let command = try XCTUnwrap(category.submenu?.items.first as? ZoneTabMenuItem)
+        XCTAssertEqual(command.title, "Duplicate")
+        XCTAssertEqual(command.keyEquivalent, "d")
+        XCTAssertEqual(command.keyEquivalentModifierMask, [.option, .shift, .command])
+        XCTAssertEqual(command.displayedShortcut, "⌥⇧⌘D")
+        session.setQuery("file duplicate")
+        XCTAssertEqual(session.results.rows.first?.title, "File › Duplicate")
+        XCTAssertEqual(session.results.rows.first?.shortcut, "⌥⇧⌘D")
+        XCTAssertEqual(session.results.selectedItem?.image?.size, fit.image?.size)
+    }
+
+    @MainActor
+    func testSearchRowsAlignIconsTitlesAndShortcutRightEdgesAcrossWidths() throws {
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        let copy = ZoneTabMenuItem(title: "Edit › Copy a very long selection with a descriptive name") {}
+        copy.displayedShortcut = "⌘C"
+        let duplicate = ZoneTabMenuItem(title: "File › Duplicate") {}
+        duplicate.displayedShortcut = "⌥⇧⌘D"
+        let results = TabMenuResultsView()
+        results.setRows([fit, copy, duplicate].map { .init(item: $0) })
+        for width in [320.0, 480.0] {
+            var cells: [TabMenuResultCell] = []
+            for index in 0..<3 {
+                let cell = try XCTUnwrap(results.tableView(results.table, viewFor: nil, row: index) as? TabMenuResultCell)
+                let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 28))
+                cell.frame = host.bounds
+                host.addSubview(cell)
+                host.layoutSubtreeIfNeeded()
+                XCTAssertEqual(cell.imageView?.frame, NSRect(x: 10, y: 6, width: 16, height: 16))
+                let title = try XCTUnwrap(cell.textField)
+                let titleRect = title.alignmentRect(forFrame: title.frame)
+                let shortcutRect = cell.shortcut.alignmentRect(forFrame: cell.shortcut.frame)
+                XCTAssertEqual(titleRect.minX, 34, accuracy: 0.5)
+                XCTAssertEqual(shortcutRect.maxX, width - 12, accuracy: 0.5)
+                XCTAssertEqual(cell.shortcut.alignment, .right)
+                XCTAssertLessThanOrEqual(titleRect.maxX, shortcutRect.minX - 15.5)
+                cells.append(cell)
+            }
+            XCTAssertEqual(cells[1].shortcut.frame.maxX, cells[2].shortcut.frame.maxX)
+            XCTAssertEqual(cells[1].textField?.stringValue, copy.title)
+            XCTAssertEqual(cells[2].shortcut.stringValue, "⌥⇧⌘D")
+        }
+    }
+
+    func testShortcutMetadataUsesCarbonGlyphsAndExplicitModifierMasks() {
+        XCTAssertEqual(AppCommandReader.shortcutModifiers(0), [.command])
+        XCTAssertEqual(AppCommandReader.shortcutModifiers(13), [.control, .shift])
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "D", glyph: 0).key, "d")
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "", glyph: 100).key, "\u{F702}")
+        XCTAssertEqual(AppCommandReader.glyph(2), "⇥")
+        XCTAssertEqual(AppCommandReader.glyph(9), "Space")
+        XCTAssertEqual(AppCommandReader.glyph(99), "⇪")
+        XCTAssertEqual(AppCommandReader.glyph(107), "⇟")
+        XCTAssertEqual(AppCommandReader.glyph(111), "F1")
+        XCTAssertEqual(AppCommandReader.glyph(115), "F5")
+        XCTAssertEqual(AppCommandReader.glyph(119), "F9")
+        XCTAssertEqual(AppCommandReader.glyph(146), "F19")
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "", glyph: 999).key, "")
     }
 }

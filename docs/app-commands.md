@@ -49,10 +49,20 @@ Typing during the bounded preparation is buffered for the menu; Escape cancels.
 A changed app/window cancels preparation before a stale menu can appear.
 
 Zonal action icons are preserved in both the native menu and search results.
+All icons use a 16 × 16 point canvas, centered without stretching their aspect
+ratio, including the application icon and zone drawings. Search rows share one
+icon/title layout for both Zonal and app commands.
 Recognized app categories and individual commands use standard SF Symbols; the
 app category can use its application icon. Unknown command titles remain without
 an icon. These presentation hints do not change command identity or targeting;
 Zonal does not extract another app's private NSMenuItem artwork.
+
+Shortcuts use native key-equivalent/modifier metadata in unfiltered menus, with
+AppKit drawing the shortcut column. Search results have a separate right-aligned
+shortcut field and keep full paths in the title column. Titles can truncate in
+the middle without overlapping shortcuts; tooltips and accessibility labels
+retain the full path/shortcut. Special-key equivalents use the SDK's Carbon menu
+glyph constants, which differ from virtual key codes.
 
 Before one AXPress, execution revalidates the active app, original AX window,
 category/path, exact retained command element, enabled state (including parents),
@@ -147,8 +157,9 @@ The user also reported an “App Command Not Confirmed” alert after searching 
 the previously installed build. That identifies the execution/validation path;
 the precise alert body was not supplied. The update adds passive search controls,
 menu-host focus handling and a bounded focus-settling check. These are covered by
-deterministic fixtures; resolution of the reported live failure remains pending
-installation and user acceptance of the combined update.
+deterministic fixtures. On the installed combined build the user later confirmed
+“Window focuses and Find opens,” providing live acceptance for the reported
+cross-app right-click/Find case.
 
 
 ## Combined dynamic menu and focus update, 2026-11-08
@@ -173,7 +184,9 @@ Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-command-m
 Artifact, provenance and retained evidence: `/private/tmp/zonal-command-menu/`.
 ZIP SHA-256: `c3438062262812d6cab9d6c98031e11fd34cb98fc023b72dcc08201ff9a86cb0`.
 
-User acceptance of dynamic height/icons and cross-app right-click → Ardia Find
-is pending. The user has been asked to test both on the actual installed build.
-The earlier successful stability acceptance applies to the previous fixed-height
-build, not this new tracking/focus behavior.
+On this installed build, the user confirmed **“Window focuses and Find opens”**
+when right-clicking Ardia from another active app and searching for Find. This
+supplies live acceptance for cross-app focusing and command execution. The user
+also inspected the menu and reported oversized/misaligned icons, then requested
+right-aligned shortcuts. Those visual issues are addressed in the subsequent
+appearance update; this is not acceptance of the new icon/column layout.
