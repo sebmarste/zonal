@@ -470,7 +470,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             // Keep Return bound to the latest query even before the tracking pass ends.
             if !query.isEmpty { updateResults() }
             reopenAfterQuery = true
-            menu.cancelTracking()
+            menu.cancelTrackingWithoutAnimation()
         } else { rebuild() }
     }
     func setNodes(_ value: [AppCommandNode], complete: Bool) {
