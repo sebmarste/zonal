@@ -14,7 +14,7 @@ enum LocalAutomationProtocol {
              move-focused-relative <left|right|up|down>
     Windows: fit-assignment <uuid> (fits that exact managed window to its assigned zone)
     Workspace: rescan, apply-profile <profile-id>, restore, open-settings
-    Performance: switcher-metrics, reset-switcher-metrics
+    Performance: switcher-metrics, reset-switcher-metrics, menu-metrics, reset-menu-metrics
     """
     static let directoryURL = ZonalStoragePaths.current.appendingPathComponent("Automation", isDirectory: true)
     static let socketURL = directoryURL.appendingPathComponent("zonal-v2.sock")
@@ -34,6 +34,8 @@ enum LocalAutomationCommand: Equatable {
     case diagnostics
     case doctor
     case switcherMetrics
+    case menuMetrics
+    case resetMenuMetrics
     case resetSwitcherMetrics
     case openSettings
     case showGlobal
@@ -67,6 +69,8 @@ enum LocalAutomationCommand: Equatable {
         case "app-menus": self = .appMenus
         case "diagnostics": self = .diagnostics
         case "doctor": self = .doctor
+        case "menu-metrics": self = .menuMetrics
+        case "reset-menu-metrics": self = .resetMenuMetrics
         case "switcher-metrics": self = .switcherMetrics
         case "reset-switcher-metrics": self = .resetSwitcherMetrics
         case "open-settings": self = .openSettings
@@ -220,6 +224,7 @@ struct LocalAutomationResult: Codable, Equatable {
     var debugState: LocalAutomationDebugState?
     var healthFindings: [ZonalHealthFinding]?
     var switcherMetrics: [SwitcherLatencySample]?
+    var menuTimings: [MenuTimingSample]?
 
     init(
         state: LocalAutomationExecutionState,
@@ -237,6 +242,7 @@ struct LocalAutomationResult: Codable, Equatable {
         diagnostics: String? = nil,
         debugState: LocalAutomationDebugState? = nil,
         healthFindings: [ZonalHealthFinding]? = nil,
+        menuTimings: [MenuTimingSample]? = nil,
         switcherMetrics: [SwitcherLatencySample]? = nil
     ) {
         self.state = state
@@ -254,6 +260,7 @@ struct LocalAutomationResult: Codable, Equatable {
         self.diagnostics = diagnostics
         self.debugState = debugState
         self.healthFindings = healthFindings
+        self.menuTimings = menuTimings
         self.switcherMetrics = switcherMetrics
     }
 }

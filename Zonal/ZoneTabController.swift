@@ -822,11 +822,14 @@ final class ZoneTabNativeButton: NSButton {
     override func rightMouseDown(with event: NSEvent) {
         NSApp.preventWindowOrdering()
         guard let window else { return }
-        showContextMenu(at: window.convertPoint(toScreen: event.locationInWindow))
+        showContextMenu(at: window.convertPoint(toScreen: event.locationInWindow), inputUptime: event.timestamp)
     }
-    func showContextMenu(at point: CGPoint) {
+    func showContextMenu(at point: CGPoint, inputUptime: Double? = nil) {
+        let start = inputUptime ?? ProcessInfo.processInfo.systemUptime
         guard let menu = makeContextMenu() else { return }
         if let session = menu.delegate as? TabContextMenuSession {
+            session.openingUptime = start
+            session.record(.menuConstruction, since: start)
             let visibleFrame = window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
             session.prepare { session.present(at: point, visibleFrame: visibleFrame) }
         } else { menu.popUp(positioning: nil, at: point, in: nil) }

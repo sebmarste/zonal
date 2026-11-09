@@ -2,6 +2,20 @@ import AppKit
 import ApplicationServices
 import Carbon
 
+enum MenuTimingPhase: String, Codable {
+    case menuConstruction, focusHandoff, focusVerification, axDiscovery, uiPreparation, menuLayout
+    case openToTracking, openToDraw, queryToResults, queryToTracking, queryToDraw, cancelledBeforeTracking
+}
+
+struct MenuTimingSample: Codable, Equatable {
+    var sessionID: UUID
+    var phase: MenuTimingPhase
+    var milliseconds: Double
+    var uptime: Double
+    var queryLength: Int
+    var resultCount: Int
+}
+
 // Paths include sibling positions and titles: duplicate labels never select each other.
 struct AppCommandPath: Equatable, Sendable {
     var indices: [Int]
@@ -320,6 +334,11 @@ struct TabMenuAppearance {
 // Native custom menu views do not receive normal menu typing. Keep text filtering
 // on the existing input tap; AppKit retains unfiltered navigation and submenus.
 final class TabMenuSearchField: NSSearchField {
+    var onDraw: (() -> Void)?
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if window?.isVisible == true { onDraw?() }
+    }
     var clear: (() -> Void)?
     override var acceptsFirstResponder: Bool { false }
     override var needsPanelToBecomeKey: Bool { false }
@@ -341,6 +360,11 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
         var enabled: Bool { item?.isEnabled == true && item?.action != nil }
     }
     private final class Table: NSTableView {
+        var onDraw: (() -> Void)?
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            if window?.isVisible == true { onDraw?() }
+        }
         override var acceptsFirstResponder: Bool { false }
         override var needsPanelToBecomeKey: Bool { false }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -355,6 +379,10 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     override var acceptsFirstResponder: Bool { false }
     override var needsPanelToBecomeKey: Bool { false }
     let table: NSTableView = Table()
+    var onDraw: (() -> Void)? {
+        get { (table as? Table)?.onDraw }
+        set { (table as? Table)?.onDraw = newValue }
+    }
     private(set) var rows: [Row] = []
     var activate: ((NSMenuItem) -> Void)?
     var contentHeight: CGFloat { rows.isEmpty ? 0 : table.rect(ofRow: rows.count - 1).maxY }
@@ -493,6 +521,27 @@ final class TabMenuResultCell: NSTableCellView {
 @MainActor
 final class TabContextMenuSession: NSObject, NSMenuDelegate {
     let menu: NSMenu
+    let sessionID = UUID()
+    var openingUptime = ProcessInfo.processInfo.systemUptime
+    var onTiming: ((MenuTimingSample) -> Void)?
+    private var hasTracked = false
+    private var hasDrawn = false
+    private var queryTrackingStart: Double?
+    private var queryDrawStart: Double?
+
+    func record(_ phase: MenuTimingPhase, since start: Double, until end: Double = ProcessInfo.processInfo.systemUptime) {
+        guard start.isFinite, end.isFinite, end >= start else { return }
+        onTiming?(.init(sessionID: sessionID, phase: phase, milliseconds: (end - start) * 1_000,
+                        uptime: end, queryLength: query.count, resultCount: query.isEmpty ? 0 : results.rows.filter(\.enabled).count))
+    }
+    func didDrawResults() {
+        guard isTracking else { return }
+        if !hasDrawn { hasDrawn = true; record(.openToDraw, since: openingUptime) }
+        if let start = queryDrawStart {
+            queryDrawStart = nil
+            record(.queryToDraw, since: start)
+        }
+    }
     let reader: AppCommandReader?
     let execution: AppCommandExecution?
     let zonalItems: [NSMenuItem]
@@ -554,6 +603,15 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         searchItem.view = view
         resultsItem.view = results
         results.activate = { [weak self] item in self?.activate(item) }
+        results.onDraw = { [weak self] in self?.didDrawResults() }
+        search.onDraw = { [weak self] in
+            guard let self else { return }
+            // Search can mark initial draw; filtered results need their own table draw.
+            if self.query.isEmpty { self.didDrawResults() }
+            else if self.isTracking, !self.hasDrawn {
+                self.hasDrawn = true; self.record(.openToDraw, since: self.openingUptime)
+            }
+        }
         rebuild()
     }
     private func info(_ title: String) -> NSMenuItem {
@@ -579,27 +637,38 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                 }
             }
         }
+        let focusStart = ProcessInfo.processInfo.systemUptime
         focusBeforeRead { [weak self] in
             guard let self, !self.closed else { return }
+            self.record(.focusHandoff, since: focusStart)
             let transitionPID = self.transitionPID
             reader.queue.async { [weak self] in
+                let verificationStart = ProcessInfo.processInfo.systemUptime
                 let ready = reader.waitForContext(transitionPID: transitionPID, allowWindowTransition: true)
+                let verificationEnd = ProcessInfo.processInfo.systemUptime
                 let context = ready ? "" : reader.contextDiagnostic()
                 Self.deliver {
                     guard let self, !self.closed else { return }
                     // Focus has its own deadline. Cold menu discovery must not
                     // turn a confirmed focus into a later focus-error alert.
+                    self.record(.focusVerification, since: verificationStart, until: verificationEnd)
                     self.preparationTimeout?.cancel(); self.preparationTimeout = nil
                     guard ready else {
                         self.failPreparation("focus-verification " + context); return
                     }
                     reader.queue.async { [weak self] in
+                        let discoveryStart = ProcessInfo.processInfo.systemUptime
                         let (nodes, complete) = reader.read()
+                        let discoveryEnd = ProcessInfo.processInfo.systemUptime
                         let current = reader.windowContextMatches() != false
                         Self.deliver {
                             guard let self, !self.closed else { return }
+                            self.record(.axDiscovery, since: discoveryStart, until: discoveryEnd)
                             guard current else { self.cancel(); self.notifyClosed(); return }
+                            let uiStart = ProcessInfo.processInfo.systemUptime
                             self.setNodes(nodes, complete: complete)
+                            if let start = self.queryTrackingStart { self.record(.queryToResults, since: start) }
+                            self.record(.uiPreparation, since: uiStart)
                             self.isPreparing = false
                             self.onQueryChanged?()
                             guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
@@ -623,15 +692,20 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         maximumResultsHeight = min(420, max(24, space - 34 - 6 - 16))
         repeat {
             reopenAfterQuery = false
+            let layoutStart = ProcessInfo.processInfo.systemUptime
             rebuild()
+            record(.menuLayout, since: layoutStart)
             popUp(menu, opensUpward ? menu.items.last : menu.items.first, point)
             // AppKit does not support resizing custom item views while tracking.
             // End that pass, then re-present the same snapshot at the original anchor.
         } while reopenAfterQuery && !closed && canPresent()
         if !closed { cancel(); notifyClosed() }
     }
-    func setQuery(_ value: String) {
+    func setQuery(_ value: String, inputUptime: Double? = nil) {
         guard !closed, query != value else { return }
+        let start = inputUptime ?? ProcessInfo.processInfo.systemUptime
+        queryTrackingStart = start
+        queryDrawStart = start
         resultsQuery = nil
         query = value
         search.stringValue = value
@@ -642,6 +716,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             reopenAfterQuery = true
             menu.cancelTrackingWithoutAnimation()
         } else { rebuild() }
+        if !isPreparing { record(.queryToResults, since: start) }
     }
     func setNodes(_ value: [AppCommandNode], complete: Bool) {
         // The menu is a frozen snapshot while tracking: no loading-induced resize,
@@ -735,7 +810,13 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     }
     func menuWillOpen(_ menu: NSMenu) {
         guard menu === self.menu else { return }
-        isTracking = true; onOpen?()
+        isTracking = true
+        if !hasTracked { hasTracked = true; record(.openToTracking, since: openingUptime) }
+        if let start = queryTrackingStart {
+            queryTrackingStart = nil
+            record(.queryToTracking, since: start)
+        }
+        onOpen?()
     }
     func menuDidClose(_ menu: NSMenu) {
         guard menu === self.menu else { return }
@@ -746,7 +827,9 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     }
     private func notifyClosed() {
         guard !didNotifyClose else { return }
-        didNotifyClose = true; onClose?()
+        didNotifyClose = true
+        if !hasTracked { record(.cancelledBeforeTracking, since: openingUptime) }
+        onClose?()
     }
     var ownsMenuFocus: Bool {
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier else { return false }
@@ -774,11 +857,11 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             else if let action { NSApp.sendAction(action, to: target, from: item) }
         }
     }
-    func input(key: Int64, text: String?, flags: CGEventFlags) {
+    func input(key: Int64, text: String?, flags: CGEventFlags, inputUptime: Double? = nil) {
         guard !closed else { return }
         if key == 53 {
             if isPreparing { cancel(); notifyClosed() }
-            else { setQuery("") }
+            else { setQuery("", inputUptime: inputUptime) }
             return
         }
         if [36, 76].contains(key), !query.isEmpty {
@@ -786,13 +869,13 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         } else if key == 125 { results.move(1) }
         else if key == 126 { results.move(-1) }
         else if [51, 117].contains(key) {
-            if flags.contains(.maskCommand) { setQuery("") }
-            else if !query.isEmpty { setQuery(String(query.dropLast())) }
+            if flags.contains(.maskCommand) { setQuery("", inputUptime: inputUptime) }
+            else if !query.isEmpty { setQuery(String(query.dropLast()), inputUptime: inputUptime) }
         } else if key == 9, flags.contains(.maskCommand) {
-            if let value = NSPasteboard.general.string(forType: .string) { setQuery(query + value) }
+            if let value = NSPasteboard.general.string(forType: .string) { setQuery(query + value, inputUptime: inputUptime) }
         } else if !flags.contains(.maskCommand), !flags.contains(.maskControl), let text,
                   let value = SwitcherTextInputPolicy().acceptedText(text) {
-            setQuery(query + value)
+            setQuery(query + value, inputUptime: inputUptime)
         }
     }
 }
@@ -800,6 +883,12 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
 @MainActor
 final class AppCommandsController {
     private var session: TabContextMenuSession?
+    private(set) var performanceSamples: [MenuTimingSample] = []
+    func clearPerformanceSamples() { performanceSamples.removeAll(keepingCapacity: true) }
+    func recordTiming(_ sample: MenuTimingSample) {
+        performanceSamples.append(sample)
+        if performanceSamples.count > 256 { performanceSamples.removeFirst(performanceSamples.count - 256) }
+    }
     private var pid: pid_t?
     private var openingPID: pid_t?
     private var openingWindow: AXUIElement?
@@ -828,9 +917,11 @@ final class AppCommandsController {
                 return
             }
             let reader = AppCommandReader(pid: pid, window: focused as! AXUIElement)
+            let inventoryStart = ProcessInfo.processInfo.systemUptime
             let (nodes, complete) = reader.read()
+            let inventoryMilliseconds = (ProcessInfo.processInfo.systemUptime - inventoryStart) * 1_000
             let context = reader.contextDiagnostic()
-            let summary = context + "\ncategories=\(nodes.count) complete=\(complete)\n" + nodes.map {
+            let summary = context + "\ninventoryReadMilliseconds=\(inventoryMilliseconds)\ncategories=\(nodes.count) complete=\(complete)\n" + nodes.map {
                 "\($0.title): commands=\($0.descendants.filter { !$0.isMenu }.count) enabled=\($0.enabled)"
             }.joined(separator: "\n")
             TabContextMenuSession.deliver {
@@ -854,6 +945,7 @@ final class AppCommandsController {
         lastInventory = "Preparing focused window menus"
         let session = TabContextMenuSession(menu: menu, reader: reader, application: NSRunningApplication(processIdentifier: targetPID))
         self.session = session
+        session.onTiming = { [weak self] in self?.recordTiming($0) }
         pid = targetPID
         session.transitionPID = active
         session.cancelFocus = cancelFocus
@@ -948,5 +1040,5 @@ final class AppCommandsController {
         current?.cancel()
         onVisibilityChanged?()
     }
-    func input(key: Int64, text: String?, flags: CGEventFlags) { session?.input(key: key, text: text, flags: flags) }
+    func input(key: Int64, text: String?, flags: CGEventFlags, inputUptime: Double? = nil) { session?.input(key: key, text: text, flags: flags, inputUptime: inputUptime) }
 }

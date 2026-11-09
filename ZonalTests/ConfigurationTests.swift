@@ -1552,3 +1552,76 @@ extension ConfigurationTests {
         XCTAssertTrue(fixture.presses.isEmpty)
     }
 }
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuTimingSamplesHaveBoundedStorageResetAndTypedAutomation() throws {
+        let controller = AppCommandsController()
+        let menu = NSMenu()
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        session.onTiming = { controller.recordTiming($0) }
+        for index in 0..<300 { session.record(.menuLayout, since: Double(index), until: Double(index) + 0.125) }
+        XCTAssertEqual(controller.performanceSamples.count, 256)
+        XCTAssertEqual(controller.performanceSamples.first?.uptime, 44.125)
+        XCTAssertTrue(controller.performanceSamples.allSatisfy { $0.milliseconds == 125 })
+        session.record(.menuLayout, since: 3, until: 2)
+        session.record(.menuLayout, since: .nan, until: 2)
+        XCTAssertEqual(controller.performanceSamples.count, 256)
+        let result = LocalAutomationResult(state: .read, menuTimings: controller.performanceSamples)
+        XCTAssertEqual(try JSONDecoder().decode(LocalAutomationResult.self, from: JSONEncoder().encode(result)), result)
+        XCTAssertEqual(LocalAutomationCommand(name: "menu-metrics", arguments: []), .menuMetrics)
+        XCTAssertEqual(LocalAutomationCommand(name: "reset-menu-metrics", arguments: []), .resetMenuMetrics)
+        controller.clearPerformanceSamples()
+        XCTAssertTrue(controller.performanceSamples.isEmpty)
+    }
+
+    @MainActor
+    func testMenuTimingsSeparateResultUpdateTrackingAndDrawAcrossReopens() throws {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Move Left") {})
+        menu.addItem(ZoneTabMenuItem(title: "Move Right") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        var passes = 0
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            passes += 1
+            session.menuWillOpen(menu)
+            session.didDrawResults() // Simulated draw boundary, no AX permission or GUI needed.
+            if passes == 1 {
+                session.setQuery("m")
+                session.setQuery("move")
+            }
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800))
+        XCTAssertEqual(passes, 2)
+        for phase in [MenuTimingPhase.openToTracking, .openToDraw, .queryToTracking, .queryToDraw] {
+            XCTAssertEqual(samples.filter { $0.phase == phase }.count, 1)
+        }
+        XCTAssertEqual(samples.filter { $0.phase == .queryToResults }.map(\.queryLength), [1, 4])
+        XCTAssertEqual(samples.first { $0.phase == .queryToDraw }?.resultCount, 2)
+        XCTAssertTrue(samples.allSatisfy { $0.sessionID == session.sessionID && $0.milliseconds >= 0 })
+        let encoded = String(decoding: try JSONEncoder().encode(samples), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("Move Left"))
+        XCTAssertFalse(encoded.contains("Move Right"))
+    }
+
+    @MainActor
+    func testPreparationTimingsIncludeSlowAXDiscoveryAndUIWork() async throws {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.04
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        let ready = expectation(description: "Measured preparation")
+        session.prepare { ready.fulfill() }
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertEqual(samples.map(\.phase), [.focusHandoff, .focusVerification, .axDiscovery, .uiPreparation])
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(samples.first { $0.phase == .axDiscovery }).milliseconds, 35)
+        XCTAssertFalse(samples.contains { $0.phase == .openToDraw || $0.phase == .openToTracking })
+        session.cancel()
+    }
+}

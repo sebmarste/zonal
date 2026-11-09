@@ -325,7 +325,7 @@ final class HotkeyManager {
 
         if let appCommands, appCommands.isCapturingInput {
             appCommands.input(key: event.getIntegerValueField(.keyboardEventKeycode),
-                              text: NSEvent(cgEvent: event)?.characters, flags: event.flags)
+                              text: NSEvent(cgEvent: event)?.characters, flags: event.flags, inputUptime: Double(event.timestamp) / 1_000_000_000)
             return nil
         }
         if event.getIntegerValueField(.keyboardEventKeycode) == 53, onEscape?() == true { return nil }

@@ -431,3 +431,36 @@ Executable SHA-256: `8b45271b4f907cf55676e5434f5ab8633c742fa15fbde426f06c949584e
 ZIP SHA-256: `1ad6c29cc8ef8b2b6e32c2a728344a172e5cea766dd8e297f2dd259e5351404c`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-review-fixes-8xxqcjq6`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-review-fixes/`.
+
+
+## Menu latency measurement
+
+`Zonal --automation menu-metrics` reads the last 256 timing samples in memory;
+`reset-menu-metrics` clears them. Readback does not open a menu or execute an
+app command. Samples contain an opaque opening/session ID, phase, monotonic end
+uptime, duration in milliseconds, query length and enabled-result count. They
+contain no search text or command/window titles and are not persisted.
+
+Opening records mouse event → constructed menu (`menuConstruction`), initial
+context check/native focus callback (`focusHandoff`), readiness verification,
+AX inventory discovery, native item/icon preparation, layout, first menu tracking
+and first draw callback. Shortcut openings start at the tab's show-menu entry,
+not at the original shortcut event. Query samples start at the CGEvent timestamp
+for keyboard input, or at the handler for mouse clear/direct calls. They separate
+result-model update, the next tracking pass and the result table's draw callback.
+Rapid queries coalesce tracking/draw samples to the latest query; model updates
+remain separate. Buffered typing waits for inventory before recording results.
+
+`openToDraw` and `queryToDraw` are AppKit draw-callback proxies, not compositor
+presentation timestamps or verified physical pixels. Missing draw samples must
+remain missing; never substitute tracking time. Failed openings record
+`cancelledBeforeTracking`. Phase durations are not additive: some overlap and
+end-to-end intervals also contain queue/event dispatch and AppKit costs.
+
+For a live baseline, reset metrics; right-click the already-focused Ardia tab,
+type `find`, clear or Escape twice without running a command, and repeat. Repeat
+with another app focused to separate native focus handoff. Group opening phases
+by session and report sample count, median and maximum; retain cold first-open
+separately. `app-menus` also reports `inventoryReadMilliseconds` for a direct
+read-only AX inventory probe. That probe excludes focus handoff, native menu
+construction/presentation and input, so it is not an end-to-end menu measurement.

@@ -76,6 +76,11 @@ extension AppContainer {
                     healthFindings: runHealthCheck()
                 )
             )
+        case .menuMetrics:
+            return success("Menu timings read", result: LocalAutomationResult(state: .read, menuTimings: appCommands.performanceSamples))
+        case .resetMenuMetrics:
+            appCommands.clearPerformanceSamples()
+            return success("Menu timings reset", state: .completed)
         case .switcherMetrics:
             return success(
                 "Switcher metrics read",
