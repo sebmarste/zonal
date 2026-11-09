@@ -628,3 +628,27 @@ Permission-independent fixtures cover own-process reads/actions/diagnostics,
 foreign worker execution, and queued Escape dismissal/deduplication. Required
 checks passed 425 XCTest tests (10 skipped) and 19 Python tests. Signed delivery
 and native acceptance remain separate evidence.
+
+
+Second-review repair source `5d64f0c3208482518d360604a29a56daa5b5b786` was signed
+for arm64 and x86_64 with the existing Developer ID identity, accepted under
+notarization submission `19d8188e-7d9e-4133-8d36-dc8c2de248b1`, stapled and
+installed on the MacBook. Signature, ticket, Gatekeeper, installed hash, single
+running process (PID 1445), mapped executable, health/doctor, UW and configuration
+preservation were verified. The previous 171 timing samples were preserved.
+
+Live self-AX validation opened Zonal Settings via the existing automation API,
+read its menus, and restored the exact prior managed window by assignment ID.
+Readback confirmed the own PID (1445), exact focused Settings AX window 23401,
+five complete categories and an 85.974 ms inventory read, with no crash/hang.
+The original PID/window focus was then verified; configuration bytes still
+matched the backup and all health checks remained true. This is real self-AX
+read evidence; own AXPress routing and the fast queued-Escape race are covered
+by permission-independent regression fixtures, not claimed as physical input
+acceptance. Required checks passed 425 XCTest tests (10 skipped), 19 Python tests.
+
+Executable SHA-256: `319078101050751bc16de774bc008b8eba1bff5767d7301a1e5561d09a6e0576`.
+ZIP SHA-256: `1a077a9b81eb903c57405aaa5110959f3da8f79ac01c537505d82e8ed93e680d`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-self-ax-escape-X2chisNR`.
+Artifact/provenance/evidence: `/private/tmp/zonal-self-ax-escape/`, including
+`evidence/live-self-check.json` and post-check health/configuration verification.

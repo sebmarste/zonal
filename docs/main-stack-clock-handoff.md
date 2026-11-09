@@ -1,5 +1,16 @@
 # Mac mini continuation
 
+Latest review repairs (2026-11-09): `5d64f0c` is signed/notarized and installed
+on the MacBook. Self-process command AX reads/actions/diagnostics use the
+existing main-thread guard; foreign AX stays on workers. A captured Escape
+on an empty filter now cancels/deduplicates closure explicitly. 425 XCTest
+tests (10 skipped) and 19 Python tests passed. Installed/mapped executable,
+health/doctor, UW and configuration preservation verified. A real Settings
+self-AX read returned five complete categories; exact prior window focus was
+restored and verified. Fast Escape and own AXPress routing have fixture evidence,
+not physical input acceptance. Evidence/rollback: `docs/app-commands.md`,
+`/private/tmp/zonal-self-ax-escape/`.
+
 Latest cache trial (2026-11-09): `890996c` is signed/notarized and installed
 on the MacBook. It prewarms after focus settles and caches four exact
 process/window contexts for 15 seconds, with a ten-second active refresh timer.
