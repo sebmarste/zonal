@@ -1,5 +1,17 @@
 # Mac mini continuation
 
+2026-11-09 repair: the user confirms warm Ardia menus open after unlocking.
+A regression reproduced a focus deadline incorrectly remaining active through
+slow/cold menu discovery. Source `eea7e6e` ends the deadline once focus is
+confirmed and ignores stale queued timeout failures, while preserving the
+bounded read and strict execution checks. 408 XCTest tests (10 skipped) and
+19 Python tests passed. The repair is signed/notarized and installed on the
+MacBook. Executable/hash/mapped path, all health flags, UW/settings and exact
+live Ardia window 22471 (PID 49865) with ten complete menu categories were
+verified. Cross-app menu/Find acceptance on this repair is pending, and a real
+cold browser relaunch remains unverified. See the latest section of
+`docs/app-commands.md`; older locked-desktop notes below are historical.
+
 Current investigation (2026-11-08): signed/notarized diagnostic source
 `7e44e49` is installed. It removes hover/expansion tooltips and records
 precise pre-menu focus failures plus native focus outcomes. 407 XCTest tests

@@ -249,3 +249,50 @@ reported focus role was AXApplication, no menu bar was exposed and Zonal saw zer
 live desktop windows. Health permissions remained true. The user has been asked
 to unlock, dismiss focus alerts and right-click Ardia once to capture the precise
 failure. Do not claim Ardia repair from this diagnostic installation.
+
+
+## Cold-menu focus deadline repair, 2026-11-09
+
+The user confirmed that menus work when Ardia is already focused and that the
+menu opens after unlocking and dismissing focus alerts. Unlocked diagnostics
+reported ten categories/196 commands complete, with successful native raise
+and front-window activation for Ardia PID 49865. This is live evidence for warm
+menu opening, not a reproduction of the original cold-launch failure.
+
+A deterministic regression then reproduced a concrete timing defect: the focus
+preparation deadline remained armed throughout AX menu discovery. A slow first
+menu read could enqueue a focus-timeout failure even after focus had been
+confirmed and the inventory returned. The diagnostic callback could also arrive
+late and dismiss an otherwise prepared menu. The new fixture fails against the
+old implementation with “Confirmed focus mislabeled as a focus timeout during
+menu discovery.”
+
+The repair cancels the focus deadline immediately after strict focus readiness,
+then performs the separately bounded AX inventory read. Queued timeout callbacks
+check that the focus deadline is still active before failing preparation.
+Capture, enabled-state/identity checks, frozen tracking snapshots and exactly-one
+AXPress semantics are unchanged. `./scripts/check` passed 408 XCTest tests
+(10 skipped, zero failures) and 19 Python tests. Cold-launch timing is covered by
+the permission-independent fixture; a real cold Ardia relaunch remains a separate
+live acceptance case.
+
+
+The repair source `eea7e6e88954d1823eedff6dd71be64d0cfbbdd2` was built for arm64 and x86_64,
+signed with Developer ID team XW6G452649 and accepted under notarization submission
+`8eb225ee-5e10-4b67-905a-9f7dfe10bf9d`. The installed signature, staple, Gatekeeper acceptance,
+executable hash and mapped running path were verified on the MacBook (PID 46445).
+All four health flags and all doctor findings were OK; UW remained active and
+configuration bytes matched the pre-install backup.
+Executable SHA-256: `e79081b2d89b3baab3d98f07e9a69619ed64e8d7e3c25500bbd77e954c7f26d7`.
+ZIP SHA-256: `8b00700c0d0689cf600cf7a700f6953c2bd44c18c55ce61f6b696201f2c443e3`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-cold-menu-fix-DyR2wVDL`.
+Artifact/provenance, failing-before regression and passing checks:
+`/private/tmp/zonal-cold-menu-fix/`.
+
+On the unlocked installed build, the live reader reported target/system/focused
+PID 49865, matching target and focused Quartz window 22471, AXWindow role and a
+readable menu bar. All ten Ardia categories were complete. This verifies live
+window identity and menu discovery, not command execution. The user has been
+asked to test cross-app right-click/Find and absence of hover tooltips on this
+repair. A real cold Ardia relaunch remains separately unverified; do not restart
+the user's browser or discard its windows/tabs to manufacture that test.
