@@ -7,7 +7,9 @@ fixed outside it. Native macOS outer menu margins remain unchanged. 411 XCTest
 tests (10 skipped) and 19 Python tests passed. Exact installed executable/mapped
 path, health, UW/settings and live Ardia identity/menu inventory were verified.
 The user accepted the preceding compact spacing/clipping fix (“looks correct
-now”); latest inset/separator visual acceptance is pending. Evidence/rollback:
+now”), but reported no visible change from this inset refinement. Do not treat
+this as accepted; a screenshot identifying the actual gap is needed before
+another change. Only Mini GUI surfaces are available to CUA. Evidence/rollback:
 `docs/app-commands.md`, `/private/tmp/zonal-menu-edge/`.
 
 Latest spacing build (2026-11-09): `72f606c` is signed/notarized and

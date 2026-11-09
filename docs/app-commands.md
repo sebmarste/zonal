@@ -357,5 +357,10 @@ Executable SHA-256: `54fed3132cbe571bacb4b7028d8f8ebf2b83916df523cf88e65eef28700
 ZIP SHA-256: `b03b03c922db151fd7a70d733c546bc3fab9a16dd57365c726137cdf771013e3`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-edge-FVa3vvF4`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-edge/`.
-The user has been asked to check scrolling inset/fixed separator behavior on the
-actual installed menu. This latest visual acceptance remains pending.
+The user checked this installed build and reported **“I dont see anything
+changed.”** This refinement is not visually accepted: moving the four-point
+internal inset did not address the gap the user means. The native NSMenu outer
+margin remains fixed, and its public SDK interface has no padding/inset control.
+The available CUA desktop surfaces are on the Mini, without a MacBook/Screen
+Sharing surface. A screenshot identifying the exact visible gap is needed before
+another implementation change or a different menu-host approach.
