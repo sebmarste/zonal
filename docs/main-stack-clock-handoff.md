@@ -1,5 +1,15 @@
 # Mac mini continuation
 
+Latest edge-spacing build (2026-11-09): `3455ae1` is signed/notarized
+and installed on the MacBook. The four-point top content inset lives inside the
+scroll document and moves away with scrolling; the separator beside Search stays
+fixed outside it. Native macOS outer menu margins remain unchanged. 411 XCTest
+tests (10 skipped) and 19 Python tests passed. Exact installed executable/mapped
+path, health, UW/settings and live Ardia identity/menu inventory were verified.
+The user accepted the preceding compact spacing/clipping fix (“looks correct
+now”); latest inset/separator visual acceptance is pending. Evidence/rollback:
+`docs/app-commands.md`, `/private/tmp/zonal-menu-edge/`.
+
 Latest spacing build (2026-11-09): `72f606c` is signed/notarized and
 installed on the MacBook. Search header 34 pt, result rows 24 pt, group gaps
 6 pt, with no redundant separator beside Search. The plain table uses actual
@@ -7,7 +17,7 @@ row bounds for its document and whole-row initial viewport; filtering resets
 scroll position and the last row is fully reachable. 410 XCTest tests (10 skipped)
 and 19 Python tests passed. Installed executable/mapped path, health, UW and
 settings preservation were verified. The user confirmed Find/no-tooltip behavior
-on the prior repair; live spacing/clipping acceptance is pending. Evidence and
+on the prior repair, and accepted this spacing/clipping fix (“looks correct now”). Evidence and
 rollback: latest `docs/app-commands.md` section and `/private/tmp/zonal-menu-spacing/`.
 
 2026-11-09 repair: the user confirms warm Ardia menus open after unlocking.

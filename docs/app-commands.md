@@ -345,3 +345,17 @@ first/last commands stay fully reachable. Icons, text size, selection and comman
 context behavior are unchanged. `./scripts/check` passed 411 XCTest tests
 (10 skipped, zero failures) and 19 Python tests, including inset scrolling,
 filter reset, last-row visibility and fixed separator placement.
+
+
+Edge-spacing source `3455ae1ce28738f744b51254c1fa1954b323f210` was built for both architectures,
+Developer ID signed and notarized under submission `4eaaac43-8138-4739-b537-20102c291334`.
+The installed signature, staple, Gatekeeper, hash and mapped executable were
+verified (one process, PID 47763), with all health/doctor checks OK, UW active and
+configuration bytes matching the backup. Live Ardia identity matched Quartz
+window 22471 in PID 49865, with ten complete categories.
+Executable SHA-256: `54fed3132cbe571bacb4b7028d8f8ebf2b83916df523cf88e65eef2870026a84`.
+ZIP SHA-256: `b03b03c922db151fd7a70d733c546bc3fab9a16dd57365c726137cdf771013e3`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-edge-FVa3vvF4`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-edge/`.
+The user has been asked to check scrolling inset/fixed separator behavior on the
+actual installed menu. This latest visual acceptance remains pending.
