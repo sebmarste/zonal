@@ -542,7 +542,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             reader.queue.async {
                 let context = reader.contextDiagnostic()
                 Self.deliver {
-                    guard !self.closed else { return }
+                    guard !self.closed, self.preparationTimeout != nil else { return }
                     self.failPreparation("focus-callback-timeout " + context)
                 }
             }
@@ -553,18 +553,25 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             reader.queue.async { [weak self] in
                 let ready = reader.waitForContext(transitionPID: transitionPID, allowWindowTransition: true)
                 let context = ready ? "" : reader.contextDiagnostic()
-                let (nodes, complete) = ready ? reader.read() : ([], false)
                 Self.deliver {
                     guard let self, !self.closed else { return }
+                    // Focus has its own deadline. Cold menu discovery must not
+                    // turn a confirmed focus into a later focus-error alert.
                     self.preparationTimeout?.cancel(); self.preparationTimeout = nil
                     guard ready else {
                         self.failPreparation("focus-verification " + context); return
                     }
-                    self.setNodes(nodes, complete: complete)
-                    self.isPreparing = false
-                    self.onQueryChanged?()
-                    guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
-                    completion()
+                    reader.queue.async { [weak self] in
+                        let (nodes, complete) = reader.read()
+                        Self.deliver {
+                            guard let self, !self.closed else { return }
+                            self.setNodes(nodes, complete: complete)
+                            self.isPreparing = false
+                            self.onQueryChanged?()
+                            guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
+                            completion()
+                        }
+                    }
                 }
             }
         }

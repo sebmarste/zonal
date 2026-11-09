@@ -721,6 +721,7 @@ private final class CommandMenuFixture {
     var focusedPIDs: [pid_t] = []
     var enabled = true
     var omitCategoryEnabled = false
+    var menuReadDelay: TimeInterval = 0
     var replacement: AXUIElement?
     var presses: [AXUIElement] = []
     var outcome: AXError = .success
@@ -731,7 +732,7 @@ private final class CommandMenuFixture {
             return AXUIElementCreateApplication(pid)
         }
         if name == kAXFocusedWindowAttribute { return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098) }
-        if name == kAXMenuBarAttribute { return self.bar }
+        if name == kAXMenuBarAttribute { Thread.sleep(forTimeInterval: self.menuReadDelay); return self.bar }
         if name == kAXChildrenAttribute {
             if CFEqual(element, self.bar) { return [self.file] as CFArray }
             if CFEqual(element, self.file) { return [self.menu] as CFArray }
@@ -1339,5 +1340,26 @@ extension ConfigurationTests {
         XCTAssertTrue(cell.subviews.compactMap { $0 as? NSTextField }.allSatisfy { !$0.allowsExpansionToolTips })
         XCTAssertEqual(cell.accessibilityLabel(), "File › Duplicate    ⌥⇧⌘D")
         XCTAssertFalse(session.results.tableView(session.results.table, shouldShowCellExpansionFor: nil, row: 0))
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testConfirmedFocusDeadlineDoesNotCancelSlowFirstMenuDiscovery() async {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.15
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.preparationTimeoutDuration = .milliseconds(40)
+        session.onPreparationFailure = { XCTFail("Confirmed focus mislabeled as a focus timeout during menu discovery") }
+        let ready = expectation(description: "Cold menu discovery completes after focus deadline")
+        session.prepare {
+            XCTAssertFalse(session.isPreparing)
+            XCTAssertEqual(session.menu.items.compactMap { $0.submenu?.title }, ["File"])
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 2)
+        try? await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(fixture.presses.isEmpty)
     }
 }
