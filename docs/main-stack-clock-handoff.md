@@ -1,5 +1,16 @@
 # Mac mini continuation
 
+Latest cache trial (2026-11-09): `890996c` is signed/notarized and installed
+on the MacBook. It prewarms after focus settles and caches four exact
+process/window contexts for 15 seconds, with a ten-second active refresh timer.
+423 XCTest tests (10 skipped) and 19 Python tests passed. Installed/mapped
+executable, health/doctor, UW and configuration preservation verified. The user
+has been asked to repeat three focused Ardia searches and one cross-app search.
+Read `menu-metrics` before any reset; cacheHit/cacheMiss distinguish openings.
+Interactive speedup is pending; retain baseline in
+`/private/tmp/zonal-menu-live-samples-_js20tok/`. Cache build/evidence/rollback:
+`docs/app-commands.md`, `/private/tmp/zonal-menu-cache/`.
+
 Latest measurement build (2026-11-09): `a027486` is signed/notarized and
 installed on the MacBook. 417 XCTest tests (10 skipped) and 19 Python tests
 passed. Installed/mapped executable, health/doctor, UW and configuration

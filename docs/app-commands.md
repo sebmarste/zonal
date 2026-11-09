@@ -565,3 +565,19 @@ axDiscovery sample; a miss records waiting for the fresh/shared inventory in
 axDiscovery. Native tracking remains the reliable opening proxy. A late search
 draw no longer produces an initial-menu openToDraw reading; missing initial
 draw callbacks stay missing. Key-to-result draw measurements are retained.
+
+
+Cache-trial source `890996c1a01b56a4be4d40ee3eda593b4b3f3200` passed 423 XCTest
+tests (10 skipped) and 19 Python tests. The universal Developer ID build was
+accepted under notarization submission `5625f050-5d5d-481d-87d5-6f7213b9990d`,
+stapled, and installed on the MacBook. Strict signature, ticket, Gatekeeper,
+installed hash, single running process (PID 99603), mapped installed executable,
+all health/doctor checks and UW/configuration preservation were verified.
+The baseline's 115 timing samples were preserved before replacement. Interactive
+cache-hit/miss and before/after latency confirmation is pending the requested
+four samples; installation/health does not establish a performance gain.
+
+Executable SHA-256: `ccb34fe87a353304ca2bf88adc4f880f22090870b6d727751ab4275bdab211e2`.
+ZIP SHA-256: `0e8f2b90a833c052690183b611d4d7fe91bf80d6b2137853cf1f41a712be148f`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-cache-ULhlM68N`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-cache/`.
