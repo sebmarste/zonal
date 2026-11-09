@@ -4,6 +4,7 @@ import Carbon
 
 enum MenuTimingPhase: String, Codable {
     case menuConstruction, focusHandoff, focusVerification, axDiscovery, uiPreparation, menuLayout
+    case cacheHit, cacheMiss
     case openToTracking, openToDraw, queryToResults, queryToTracking, queryToDraw, cancelledBeforeTracking
 }
 
@@ -29,6 +30,8 @@ struct AppCommandPath: Equatable, Sendable {
 }
 
 func commandAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    // An app object's timeout does not propagate to its child menu elements.
+    AXUIElementSetMessagingTimeout(element, 0.15)
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
     return value
@@ -224,6 +227,90 @@ final class AppCommandReader: @unchecked Sendable {
         // A timeout may mean the action ran. Issue exactly one press, never retry.
         let result = press(fresh.element)
         return result == .success ? nil : "The app did not confirm execution (\(result.rawValue)). Check its state before trying again."
+    }
+}
+
+// AX command objects are document-specific, even when two windows share an app.
+struct AppMenuContext: Equatable, @unchecked Sendable {
+    var pid: pid_t
+    var window: AXUIElement
+    var launchDate: Date?
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.pid == rhs.pid && lhs.launchDate == rhs.launchDate && CFEqual(lhs.window, rhs.window)
+    }
+}
+
+struct AppMenuInventory: @unchecked Sendable {
+    var nodes: [AppCommandNode]
+    var complete: Bool
+    var isCurrent: Bool
+    static let unavailable = Self(nodes: [], complete: false, isCurrent: false)
+}
+
+@MainActor
+final class AppMenuCache {
+    private struct Entry {
+        var context: AppMenuContext
+        var inventory: AppMenuInventory
+        var capturedAt: Double
+    }
+    private struct Pending {
+        var id: UUID
+        var context: AppMenuContext
+        var completions: [@MainActor @Sendable (AppMenuInventory) -> Void]
+    }
+    private var entries: [Entry] = []
+    private var pending: [Pending] = []
+    private let now: () -> Double
+    init(now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) { self.now = now }
+
+    func snapshot(for context: AppMenuContext) -> AppMenuInventory? {
+        let time = now()
+        entries.removeAll { time < $0.capturedAt || time - $0.capturedAt >= 15 }
+        guard let index = entries.firstIndex(where: { $0.context == context }) else { return nil }
+        let entry = entries.remove(at: index)
+        entries.append(entry)
+        return entry.inventory
+    }
+    func store(_ inventory: AppMenuInventory, for context: AppMenuContext) {
+        guard inventory.complete, inventory.isCurrent, !inventory.nodes.isEmpty else { return }
+        entries.removeAll { $0.context == context }
+        entries.append(.init(context: context, inventory: inventory, capturedAt: now()))
+        if entries.count > 4 { entries.removeFirst(entries.count - 4) }
+    }
+    func invalidate(_ context: AppMenuContext? = nil, pid: pid_t? = nil) {
+        func matches(_ key: AppMenuContext) -> Bool {
+            if let context { return context == key }
+            return pid == nil || pid == key.pid
+        }
+        entries.removeAll { matches($0.context) }
+        let cancelled = pending.filter { matches($0.context) }
+        pending.removeAll { matches($0.context) }
+        for job in cancelled { job.completions.forEach { $0(.unavailable) } }
+    }
+    // Openings join an in-flight prewarm instead of scanning the same tree twice.
+    func load(_ context: AppMenuContext, reader: AppCommandReader,
+              completion: @escaping @MainActor @Sendable (AppMenuInventory) -> Void) {
+        if let index = pending.firstIndex(where: { $0.context == context }) {
+            pending[index].completions.append(completion)
+            return
+        }
+        let id = UUID()
+        pending.append(.init(id: id, context: context, completions: [completion]))
+        reader.queue.async { [weak self] in
+            let inventory: AppMenuInventory
+            if reader.windowContextMatches() == true {
+                let (nodes, complete) = reader.read()
+                inventory = .init(nodes: nodes, complete: complete, isCurrent: reader.windowContextMatches() == true)
+            } else { inventory = .unavailable }
+            TabContextMenuSession.deliver {
+                guard let self, let index = self.pending.firstIndex(where: { $0.id == id }) else { return }
+                let job = self.pending.remove(at: index)
+                if inventory.isCurrent { self.store(inventory, for: context) }
+                else { self.entries.removeAll { $0.context == context } }
+                job.completions.forEach { $0(inventory) }
+            }
+        }
     }
 }
 
@@ -558,6 +645,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     private var didNotifyClose = false
     private var preparationTimeout: Task<Void, Never>?
     var focusBeforeRead: (@escaping @MainActor @Sendable () -> Void) -> Void = { $0() }
+    var loadInventory: ((@escaping @MainActor @Sendable (AppMenuInventory, Bool) -> Void) -> Void)?
     var cancelFocus: (() -> Void)?
     var transitionPID: pid_t?
     var onPreparationFailure: (() -> Void)?
@@ -608,9 +696,6 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             guard let self else { return }
             // Search can mark initial draw; filtered results need their own table draw.
             if self.query.isEmpty { self.didDrawResults() }
-            else if self.isTracking, !self.hasDrawn {
-                self.hasDrawn = true; self.record(.openToDraw, since: self.openingUptime)
-            }
         }
         rebuild()
     }
@@ -656,23 +741,26 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                     guard ready else {
                         self.failPreparation("focus-verification " + context); return
                     }
-                    reader.queue.async { [weak self] in
-                        let discoveryStart = ProcessInfo.processInfo.systemUptime
-                        let (nodes, complete) = reader.read()
-                        let discoveryEnd = ProcessInfo.processInfo.systemUptime
-                        let current = reader.windowContextMatches() != false
-                        Self.deliver {
-                            guard let self, !self.closed else { return }
-                            self.record(.axDiscovery, since: discoveryStart, until: discoveryEnd)
-                            guard current else { self.cancel(); self.notifyClosed(); return }
-                            let uiStart = ProcessInfo.processInfo.systemUptime
-                            self.setNodes(nodes, complete: complete)
-                            if let start = self.queryTrackingStart { self.record(.queryToResults, since: start) }
-                            self.record(.uiPreparation, since: uiStart)
-                            self.isPreparing = false
-                            self.onQueryChanged?()
-                            guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
-                            completion()
+                    let discoveryStart = ProcessInfo.processInfo.systemUptime
+                    let consume: @MainActor @Sendable (AppMenuInventory, Bool) -> Void = { [weak self] inventory, cached in
+                        guard let self, !self.closed else { return }
+                        if !cached { self.record(.axDiscovery, since: discoveryStart) }
+                        guard inventory.isCurrent else { self.cancel(); self.notifyClosed(); return }
+                        let uiStart = ProcessInfo.processInfo.systemUptime
+                        self.setNodes(inventory.nodes, complete: inventory.complete)
+                        if let start = self.queryTrackingStart { self.record(.queryToResults, since: start) }
+                        self.record(.uiPreparation, since: uiStart)
+                        self.isPreparing = false
+                        self.onQueryChanged?()
+                        guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
+                        completion()
+                    }
+                    if let load = self.loadInventory { load(consume) }
+                    else {
+                        reader.queue.async {
+                            let (nodes, complete) = reader.read()
+                            let current = reader.windowContextMatches() != false
+                            Self.deliver { consume(.init(nodes: nodes, complete: complete, isCurrent: current), false) }
                         }
                     }
                 }
@@ -704,6 +792,8 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     func setQuery(_ value: String, inputUptime: Double? = nil) {
         guard !closed, query != value else { return }
         let start = inputUptime ?? ProcessInfo.processInfo.systemUptime
+        // If AppKit reused a cached initial surface, its first later draw includes idle time.
+        if hasTracked, !hasDrawn { hasDrawn = true }
         queryTrackingStart = start
         queryDrawStart = start
         resultsQuery = nil
@@ -883,6 +973,65 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
 @MainActor
 final class AppCommandsController {
     private var session: TabContextMenuSession?
+    let menuCache = AppMenuCache()
+    private var focusedContext: AppMenuContext?
+    private var prewarmTask: Task<Void, Never>?
+    private var prewarmTimer: Timer?
+    private var lifecycleObservers: [NSObjectProtocol] = []
+
+    private func updatePrewarmWindow(_ window: AXUIElement?) {
+        guard let window else { focusedContext = nil; prewarmTask?.cancel(); return }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success,
+              pid != ProcessInfo.processInfo.processIdentifier else { return }
+        let context = AppMenuContext(pid: pid, window: window, launchDate: NSRunningApplication(processIdentifier: pid)?.launchDate)
+        let changed = focusedContext != context
+        focusedContext = context
+        startPrewarming()
+        if changed || menuCache.snapshot(for: context) == nil { schedulePrewarm() }
+    }
+    private func schedulePrewarm() {
+        prewarmTask?.cancel()
+        prewarmTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            self?.prewarmFocusedWindow()
+        }
+    }
+    private func startPrewarming() {
+        guard prewarmTimer == nil else { return }
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.prewarmFocusedWindow() }
+        }
+        prewarmTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        let center = NSWorkspace.shared.notificationCenter
+        lifecycleObservers.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            MainActor.assumeIsolated { self?.menuCache.invalidate(pid: app.processIdentifier) }
+        })
+        for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willSleepNotification] {
+            lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.prewarmTask?.cancel(); self?.focusedContext = nil; self?.menuCache.invalidate()
+                }
+            })
+        }
+    }
+    private func prewarmFocusedWindow() {
+        guard !isCapturingInput, let context = focusedContext,
+              frontmostPID() == context.pid,
+              NSRunningApplication(processIdentifier: context.pid)?.launchDate == context.launchDate else { return }
+        menuCache.load(context, reader: makeReader(context.pid, context.window)) { _ in }
+    }
+    func stop() {
+        close()
+        prewarmTask?.cancel(); prewarmTask = nil
+        prewarmTimer?.invalidate(); prewarmTimer = nil
+        let center = NSWorkspace.shared.notificationCenter
+        lifecycleObservers.forEach(center.removeObserver)
+        lifecycleObservers.removeAll()
+        focusedContext = nil; menuCache.invalidate()
+    }
     private(set) var performanceSamples: [MenuTimingSample] = []
     func clearPerformanceSamples() { performanceSamples.removeAll(keepingCapacity: true) }
     func recordTiming(_ sample: MenuTimingSample) {
@@ -896,8 +1045,11 @@ final class AppCommandsController {
     private var checkingFocus = false
     private var activationObserver: NSObjectProtocol?
     private let makeReader: (pid_t, AXUIElement) -> AppCommandReader
-    init(makeReader: @escaping (pid_t, AXUIElement) -> AppCommandReader = { AppCommandReader(pid: $0, window: $1) }) {
+    private let frontmostPID: () -> pid_t?
+    init(makeReader: @escaping (pid_t, AXUIElement) -> AppCommandReader = { AppCommandReader(pid: $0, window: $1) },
+         frontmostPID: @escaping () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }) {
         self.makeReader = makeReader
+        self.frontmostPID = frontmostPID
     }
     private(set) var isVisible = false
     private(set) var lastInventory = "App menus have not been opened"
@@ -938,10 +1090,12 @@ final class AppCommandsController {
         cancelFocus()
         var targetPID: pid_t = 0
         AXUIElementGetPid(expectedWindow, &targetPID)
-        let active = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let active = frontmostPID()
         openingPID = active
         self.openingWindow = openingWindow
         let reader = makeReader(targetPID, expectedWindow)
+        let context = AppMenuContext(pid: targetPID, window: expectedWindow,
+                                     launchDate: NSRunningApplication(processIdentifier: targetPID)?.launchDate)
         lastInventory = "Preparing focused window menus"
         let session = TabContextMenuSession(menu: menu, reader: reader, application: NSRunningApplication(processIdentifier: targetPID))
         self.session = session
@@ -958,8 +1112,23 @@ final class AppCommandsController {
                 }
             }
         }
+        session.loadInventory = { [weak self, weak session] completion in
+            guard let self, let session else { return }
+            let start = ProcessInfo.processInfo.systemUptime
+            if let inventory = self.menuCache.snapshot(for: context) {
+                session.record(.cacheHit, since: start)
+                completion(inventory, true)
+            } else {
+                session.record(.cacheMiss, since: start)
+                self.menuCache.load(context, reader: reader) { completion($0, false) }
+            }
+        }
         session.execution?.focusWindow = focusWindow
-        session.execution?.onStatus = { [weak self] status in self?.lastInventory += " execution=\(status)" }
+        session.execution?.onStatus = { [weak self] status in
+            self?.menuCache.invalidate(context)
+            self?.schedulePrewarm()
+            self?.lastInventory += " execution=\(status)"
+        }
         session.onPreparationFailure = { [weak self] in
             self?.lastInventory += " frontmostPID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)"
             let alert = NSAlert()
@@ -974,12 +1143,16 @@ final class AppCommandsController {
         session.onPreparing = { [weak self] in self?.startWatching(); self?.onVisibilityChanged?() }
         session.onOpen = { [weak self, weak session] in
             guard let self, let session, self.session === session else { return }
+            self.focusedContext = context
+            self.startPrewarming()
             self.isVisible = true; self.onVisibilityChanged?()
             self.startWatching()
         }
         session.onClose = { [weak self, weak session] in
             guard let self, self.session === session else { return }
             self.close()
+            // Refresh after dismissal; never replace rows while a native menu tracks.
+            self.schedulePrewarm()
         }
         session.onInventory = { [weak self] in self?.lastInventory = $0 }
         session.onQueryChanged = { [weak self] in self?.onVisibilityChanged?() }
@@ -999,7 +1172,7 @@ final class AppCommandsController {
         RunLoop.main.add(timer, forMode: .common)
     }
     private func currentAppIsAllowed() -> Bool {
-        AppCommandFocusPolicy.allowsApp(active: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+        AppCommandFocusPolicy.allowsApp(active: frontmostPID(),
             target: pid, opening: openingPID, preparing: session?.isPreparing == true,
             menuOwnsFocus: isVisible && session?.ownsMenuFocus == true)
     }
@@ -1018,6 +1191,7 @@ final class AppCommandsController {
         }
     }
     func focusedWindowChanged(_ window: AXUIElement?) {
+        updatePrewarmWindow(window)
         guard isCapturingInput, let reader = session?.reader, let window else { return }
         if CFEqual(window, reader.window) { return }
         var windowPID: pid_t = 0

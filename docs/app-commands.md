@@ -529,3 +529,39 @@ path via a short-lived, exact-window prewarmed presentation snapshot, while
 retaining strict execution-time validation. Reducing scan round trips is next;
 search resize work is secondary at this baseline. These are proposed next steps,
 not implemented optimizations or measured speedups.
+
+
+## Exact-window menu caching trial
+
+Menu trees are cached in memory across openings, scoped to PID, process launch
+date and CFEqual identity of the exact AX window. The cache retains at most four
+contexts, with a 15-second age limit unaffected by reads. Only complete, nonempty,
+verified-window scans are retained; an incomplete scan can still serve its one
+opening but does not become a reusable cache entry. No app-global command tree,
+disk cache or persistence format is introduced.
+
+Focus settling for 200 ms starts an off-main-thread prewarm. A ten-second timer
+refreshes only the currently focused app/window, and skips scans while a menu is
+preparing/tracking. Dismissal schedules another refresh. Openings share an
+in-flight prewarm rather than duplicate it. A fresh snapshot skips discovery on
+the opening path, but focus verification still runs before presentation. Refresh
+never changes the snapshot displayed by an open menu.
+
+Cache entries and pending deliveries are invalidated on app termination,
+sleep/session resignation, app-command completion (including uncertain outcomes)
+and shutdown. Pending scan IDs prevent late results repopulating invalidated
+entries. A restarted app cannot reuse an old PID's snapshot. Individual AX menu
+objects receive the bounded message timeout, since app-object timeouts do not
+propagate to child elements.
+
+This is a presentation cache: document edits can change labels, enabled state or
+new commands before the next refresh (up to the 15-second age cap). Execution
+still rereads the category and exact path, compares the retained AX element and
+shortcut, checks enabled ancestors and confirms the exact focused window before
+one AXPress. Stale commands are rejected; they are not retried.
+
+`menu-metrics` adds cacheHit/cacheMiss markers for each opening. A hit has no
+axDiscovery sample; a miss records waiting for the fresh/shared inventory in
+axDiscovery. Native tracking remains the reliable opening proxy. A late search
+draw no longer produces an initial-menu openToDraw reading; missing initial
+draw callbacks stay missing. Key-to-result draw measurements are retained.

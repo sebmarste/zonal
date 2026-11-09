@@ -266,7 +266,7 @@ final class AppContainer: ObservableObject {
         windowMovementObserver.stop()
         workspaceState.stop()
         activeWindowOutline.stop()
-        appCommands.close()
+        appCommands.stop()
         zoneTabs.stop()
         windowController.onPlacementStarted = nil
         windowController.onPlacementSettled = nil

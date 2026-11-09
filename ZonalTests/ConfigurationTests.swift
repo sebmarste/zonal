@@ -728,7 +728,9 @@ private final class CommandMenuFixture {
     var onPress: (() -> Void)?
     var onAttribute: (() -> Void)?
     var onMenuRead: (() -> Void)?
-    lazy var reader = AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
+    lazy var reader = makeReader()
+    func makeReader() -> AppCommandReader {
+        AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
         self.onAttribute?()
         if name == kAXFocusedApplicationAttribute {
             let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
@@ -752,6 +754,7 @@ private final class CommandMenuFixture {
         if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
         return nil
     }, press: { [unowned self] element in self.presses.append(element); self.onPress?(); return self.outcome }, diagnosticWindowID: { _ in nil })
+    }
 }
 
 extension ConfigurationTests {
@@ -1622,6 +1625,159 @@ extension ConfigurationTests {
         XCTAssertEqual(samples.map(\.phase), [.focusHandoff, .focusVerification, .axDiscovery, .uiPreparation])
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(samples.first { $0.phase == .axDiscovery }).milliseconds, 35)
         XCTAssertFalse(samples.contains { $0.phase == .openToDraw || $0.phase == .openToTracking })
+        session.cancel()
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuCacheExpiresAndSeparatesWindowAndProcessIncarnations() throws {
+        let fixture = CommandMenuFixture()
+        var now = 10.0
+        let cache = AppMenuCache(now: { now })
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: Date(timeIntervalSince1970: 1))
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        cache.store(inventory, for: key)
+        XCTAssertNotNil(cache.snapshot(for: key))
+        var other = key; other.window = AXUIElementCreateApplication(910200)
+        XCTAssertNil(cache.snapshot(for: other))
+        other = key; other.pid += 1
+        XCTAssertNil(cache.snapshot(for: other))
+        other = key; other.launchDate = Date(timeIntervalSince1970: 2)
+        XCTAssertNil(cache.snapshot(for: other), "PID reuse cannot reuse another process's menu")
+        now = 24.9
+        XCTAssertNotNil(cache.snapshot(for: key))
+        now = 25
+        XCTAssertNil(cache.snapshot(for: key), "Reads do not extend the snapshot's age")
+        var incomplete = inventory; incomplete.complete = false
+        cache.store(incomplete, for: key)
+        XCTAssertNil(cache.snapshot(for: key))
+        incomplete = inventory; incomplete.isCurrent = false
+        cache.store(incomplete, for: key)
+        XCTAssertNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testMenuCacheEvictsLeastRecentlyUsedContextAndInvalidatesByProcess() {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        let keys = (0..<5).map { AppMenuContext(pid: fixture.pid + pid_t($0), window: fixture.window, launchDate: nil) }
+        for key in keys.prefix(4) { cache.store(inventory, for: key) }
+        XCTAssertNotNil(cache.snapshot(for: keys[0]))
+        cache.store(inventory, for: keys[4])
+        XCTAssertNil(cache.snapshot(for: keys[1]))
+        XCTAssertNotNil(cache.snapshot(for: keys[0]))
+        cache.invalidate(pid: keys[0].pid)
+        XCTAssertNil(cache.snapshot(for: keys[0]))
+        XCTAssertNotNil(cache.snapshot(for: keys[2]))
+        cache.invalidate()
+        XCTAssertNil(cache.snapshot(for: keys[2]))
+    }
+
+    @MainActor
+    func testInvalidatedPrewarmCannotRestoreOldSnapshotOrDeliverTwice() async {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.05
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let readStarted = expectation(description: "Scan started")
+        fixture.onMenuRead = { readStarted.fulfill() }
+        var callbacks = 0
+        cache.load(key, reader: fixture.reader) { inventory in
+            callbacks += 1
+            XCTAssertFalse(inventory.isCurrent)
+        }
+        await fulfillment(of: [readStarted], timeout: 2)
+        cache.invalidate(key)
+        XCTAssertEqual(callbacks, 1)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(callbacks, 1)
+        XCTAssertNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testFocusPrewarmIsSharedWithOpeningThenReusedWithoutAnotherScan() async throws {
+        let fixture = CommandMenuFixture()
+        let releaseScan = DispatchSemaphore(value: 0)
+        let scanStarted = expectation(description: "Focus settled and prewarm started")
+        var scans = 0
+        fixture.onMenuRead = {
+            scans += 1
+            if scans == 1 {
+                scanStarted.fulfill()
+                XCTAssertEqual(releaseScan.wait(timeout: .now() + 2), .success)
+            }
+        }
+        let controller = AppCommandsController(makeReader: { _, _ in fixture.makeReader() }, frontmostPID: { 910002 })
+        defer { controller.stop() }
+        controller.focusedWindowChanged(fixture.window)
+        await fulfillment(of: [scanStarted], timeout: 2)
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        let load = try XCTUnwrap(session.loadInventory)
+        session.loadInventory = { completion in
+            load(completion)
+            releaseScan.signal()
+        }
+        let prepared = expectation(description: "Opening joined prewarm")
+        session.prepare { prepared.fulfill() }
+        await fulfillment(of: [prepared], timeout: 2)
+        XCTAssertEqual(scans, 1)
+        XCTAssertTrue(controller.performanceSamples.contains { $0.phase == .cacheMiss })
+        let next = NSMenu()
+        controller.configure(next, expectedWindow: fixture.window)
+        let nextSession = try XCTUnwrap(next.delegate as? TabContextMenuSession)
+        let ready = expectation(description: "Warm opening")
+        nextSession.prepare { ready.fulfill() }
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(scans, 1, "A warm opening must not discover the AX tree again")
+        XCTAssertTrue(controller.performanceSamples.contains { $0.phase == .cacheHit })
+        XCTAssertEqual(next.items.compactMap { $0.submenu?.title }, ["File"])
+        let key = AppMenuContext(pid: 910002, window: fixture.window, launchDate: nil)
+        nextSession.menuWillOpen(next)
+        var updated = try XCTUnwrap(controller.menuCache.snapshot(for: key))
+        updated.nodes[0].path.titles = ["Updated"]
+        controller.menuCache.store(updated, for: key)
+        XCTAssertEqual(next.items.compactMap { $0.submenu?.title }, ["File"], "Refresh cannot change a tracking menu")
+        XCTAssertEqual(controller.menuCache.snapshot(for: key)?.nodes.first?.title, "Updated")
+        nextSession.execution?.onStatus?("confirmed")
+        XCTAssertNil(controller.menuCache.snapshot(for: key), "Execution outcomes invalidate the cached presentation")
+    }
+
+    @MainActor
+    func testCachedCommandStillRejectsDisabledOrReplacedLiveCommand() throws {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        cache.store(.init(nodes: fixture.reader.read().0, complete: true, isCurrent: true), for: key)
+        let command = try XCTUnwrap(cache.snapshot(for: key)?.nodes.first?.children.last)
+        XCTAssertTrue(command.enabled)
+        fixture.enabled = false
+        XCTAssertNotNil(fixture.reader.execute(command))
+        fixture.enabled = true
+        fixture.replacement = AXUIElementCreateApplication(910009)
+        XCTAssertNotNil(fixture.reader.execute(command))
+        fixture.replacement = nil
+        fixture.current = false
+        XCTAssertNotNil(fixture.reader.execute(command))
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testSearchDrawCannotMasqueradeAsInitialMenuDrawAfterIdle() {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Find") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        session.menuWillOpen(menu)
+        session.setQuery("find")
+        session.didDrawResults()
+        XCTAssertFalse(samples.contains { $0.phase == .openToDraw })
+        XCTAssertTrue(samples.contains { $0.phase == .queryToDraw })
         session.cancel()
     }
 }
