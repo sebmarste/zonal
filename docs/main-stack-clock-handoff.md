@@ -1,5 +1,15 @@
 # Mac mini continuation
 
+Latest spacing build (2026-11-09): `72f606c` is signed/notarized and
+installed on the MacBook. Search header 34 pt, result rows 24 pt, group gaps
+6 pt, with no redundant separator beside Search. The plain table uses actual
+row bounds for its document and whole-row initial viewport; filtering resets
+scroll position and the last row is fully reachable. 410 XCTest tests (10 skipped)
+and 19 Python tests passed. Installed executable/mapped path, health, UW and
+settings preservation were verified. The user confirmed Find/no-tooltip behavior
+on the prior repair; live spacing/clipping acceptance is pending. Evidence and
+rollback: latest `docs/app-commands.md` section and `/private/tmp/zonal-menu-spacing/`.
+
 2026-11-09 repair: the user confirms warm Ardia menus open after unlocking.
 A regression reproduced a focus deadline incorrectly remaining active through
 slow/cold menu discovery. Source `eea7e6e` ends the deadline once focus is
@@ -8,8 +18,8 @@ bounded read and strict execution checks. 408 XCTest tests (10 skipped) and
 19 Python tests passed. The repair is signed/notarized and installed on the
 MacBook. Executable/hash/mapped path, all health flags, UW/settings and exact
 live Ardia window 22471 (PID 49865) with ten complete menu categories were
-verified. Cross-app menu/Find acceptance on this repair is pending, and a real
-cold browser relaunch remains unverified. See the latest section of
+verified. The user confirmed “Menu and Find work; no tooltips” on this repair.
+A real cold browser relaunch remains unverified. See the latest section of
 `docs/app-commands.md`; older locked-desktop notes below are historical.
 
 Current investigation (2026-11-08): signed/notarized diagnostic source

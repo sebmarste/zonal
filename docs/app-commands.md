@@ -313,3 +313,20 @@ navigation to the end of a long mixed-group list, shrinking from a scrolled list
 to one result, and that compact row/header content stays inside its bounds.
 `./scripts/check` passed 410 XCTest tests (10 skipped, zero failures) and 19 Python
 tests. This deterministic geometry evidence is distinct from live visual checks.
+
+
+Spacing source `72f606cf184614a6c64f6ea474b7a3c4a795e91d` was built for both architectures,
+signed with Developer ID team XW6G452649, and accepted under notarization submission
+`45b0e8e1-445a-44c5-b2e8-26c445fe4cb8`. The installed signature, staple, Gatekeeper assessment,
+executable hash and mapped path were verified (one process, PID 47174). All health
+flags and doctor findings were OK; UW stayed active and configuration bytes
+matched the pre-install backup. The live focused-app inventory was complete.
+Executable SHA-256: `03d2125230951030684a1415f3f1ac8db07f6ac7806deb19021275586342d643`.
+ZIP SHA-256: `db2a27d7b8b5afe0c4c4bd358e20408b66a5b1e1c7cdcf1639b1dbc571099f6f`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-spacing-VeGiHEFw`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-spacing/`.
+
+The user has been asked to scroll a long filtered list to the end, then narrow
+the filter, and check first/last-row visibility and compact spacing. Live visual
+acceptance of this spacing update is pending; the earlier Find/no-tooltip
+acceptance applies to the preceding repair and is recorded separately.
