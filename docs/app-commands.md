@@ -608,3 +608,23 @@ diagnostics: `/private/tmp/zonal-menu-cache/evidence/` (`interactive-menu-metric
 `cache-comparison.json`, `cache-comparison.html`, `after-command-*`, `warm-command-*`).
 The recommendation is to retain the scoped, bounded cache trial with its existing
 15-second presentation freshness limit and strict live command revalidation.
+
+
+## Second review fixes
+
+AppCommandReader now routes attribute reads, AXPress and diagnostic window-ID
+lookups through the existing AXThreadAccess policy: own-process objects enter
+AppKit on the main thread, while foreign objects stay on the reader worker.
+The initial focused-window read in the read-only app-menus diagnostic uses the
+same policy, covering Zonal Settings before a reader exists. No new AX action,
+retry, cache lifetime or focus policy is introduced.
+
+Captured Escape cancels a preparing menu or an already-empty search, notifying
+closure once. A nonempty search is cleared first. This handles two Escape events
+captured against the same tap snapshot without relying on the second event
+reaching native AppKit tracking.
+
+Permission-independent fixtures cover own-process reads/actions/diagnostics,
+foreign worker execution, and queued Escape dismissal/deduplication. Required
+checks passed 425 XCTest tests (10 skipped) and 19 Python tests. Signed delivery
+and native acceptance remain separate evidence.

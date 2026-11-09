@@ -53,7 +53,7 @@ struct AppCommandNode: Identifiable, @unchecked Sendable {
     var descendants: [AppCommandNode] { children.flatMap { [$0] + $0.descendants } }
 }
 
-// AX calls have a per-message timeout and scans have a total budget; neither runs on the UI thread.
+// Foreign AX runs on the worker queue; self-AX must enter AppKit on the main thread.
 final class AppCommandReader: @unchecked Sendable {
     let app: AXUIElement
     let pid: pid_t
@@ -67,9 +67,15 @@ final class AppCommandReader: @unchecked Sendable {
          press: @escaping (AXUIElement) -> AXError = { AXUIElementPerformAction($0, kAXPressAction as CFString) },
          diagnosticWindowID: @escaping (AXUIElement) -> UInt32? = { WindowIDResolver().resolve(element: $0) { nil }.windowID }) {
         self.pid = pid
-        self.attribute = attribute
-        self.press = press
-        self.diagnosticWindowID = diagnosticWindowID
+        self.attribute = { element, name in
+            AXThreadAccess.perform(for: element) { attribute(element, name) }
+        }
+        self.press = { element in
+            AXThreadAccess.perform(for: element) { press(element) }
+        }
+        self.diagnosticWindowID = { element in
+            AXThreadAccess.perform(for: element) { diagnosticWindowID(element) }
+        }
         app = AXUIElementCreateApplication(pid)
         self.window = window
         AXUIElementSetMessagingTimeout(app, 0.15)
@@ -950,7 +956,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     func input(key: Int64, text: String?, flags: CGEventFlags, inputUptime: Double? = nil) {
         guard !closed else { return }
         if key == 53 {
-            if isPreparing { cancel(); notifyClosed() }
+            if isPreparing || query.isEmpty { cancel(); notifyClosed() }
             else { setQuery("", inputUptime: inputUptime) }
             return
         }
@@ -1064,7 +1070,8 @@ final class AppCommandsController {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let app = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(app, 0.15)
-            guard let focused = commandAttribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            let focused = AXThreadAccess.perform(for: app) { commandAttribute(app, kAXFocusedWindowAttribute) }
+            guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
                 TabContextMenuSession.deliver { completion("Active app has no readable focused window") }
                 return
             }

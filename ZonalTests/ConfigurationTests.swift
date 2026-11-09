@@ -1781,3 +1781,76 @@ extension ConfigurationTests {
         session.cancel()
     }
 }
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testQueuedEscapeAfterClearingSearchDismissesExactlyOnce() {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Find") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        session.setQuery("find")
+        session.menuWillOpen(menu)
+        var closes = 0
+        session.onClose = { closes += 1 }
+        // Both events may already be captured before the tap snapshot updates.
+        session.input(key: 53, text: nil, flags: [])
+        XCTAssertEqual(session.query, "")
+        XCTAssertEqual(closes, 0)
+        session.input(key: 53, text: nil, flags: [])
+        session.input(key: 53, text: nil, flags: [])
+        XCTAssertEqual(closes, 1)
+        XCTAssertFalse(session.isTracking)
+    }
+
+    func testSelfCommandReadsPressAndDiagnosticsUseMainWhileForeignReadsStayOnWorker() async throws {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let own = AXUIElementCreateApplication(ownPID)
+        let bar = AXUIElementCreateApplication(910102)
+        let category = AXUIElementCreateApplication(910103)
+        let wrapper = AXUIElementCreateApplication(910104)
+        var presses = 0
+        var diagnosticReads = 0
+        // The fake own-process handle represents both focused window and command.
+        // Attribute/action providers never call real AX, so no permission is needed.
+        let reader = AppCommandReader(pid: ownPID, window: own, attribute: { element, name in
+            var pid: pid_t = 0
+            AXUIElementGetPid(element, &pid)
+            XCTAssertEqual(Thread.isMainThread, pid == ownPID)
+            if name == kAXFocusedApplicationAttribute || name == kAXFocusedWindowAttribute { return own }
+            if name == kAXMenuBarAttribute { return bar }
+            if name == kAXChildrenAttribute {
+                if CFEqual(element, bar) { return [category] as CFArray }
+                if CFEqual(element, category) { return [wrapper] as CFArray }
+                if CFEqual(element, wrapper) { return [own] as CFArray }
+                return [] as CFArray
+            }
+            if name == kAXRoleAttribute { return (CFEqual(element, wrapper) ? kAXMenuRole : kAXMenuItemRole) as CFString }
+            if name == kAXTitleAttribute { return (CFEqual(element, category) ? "File" : "Find") as CFString }
+            if name == kAXEnabledAttribute { return kCFBooleanTrue }
+            return nil
+        }, press: { element in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(CFEqual(element, own))
+            presses += 1
+            return .success
+        }, diagnosticWindowID: { element in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(CFEqual(element, own))
+            diagnosticReads += 1
+            return nil
+        })
+        let done = expectation(description: "Own and foreign AX routed safely")
+        reader.queue.async {
+            let (nodes, complete) = reader.read()
+            XCTAssertTrue(complete)
+            if let command = nodes.first?.children.first { XCTAssertNil(reader.execute(command)) }
+            else { XCTFail("Missing fake command") }
+            _ = reader.contextDiagnostic()
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 3)
+        XCTAssertEqual(presses, 1)
+        XCTAssertEqual(diagnosticReads, 2)
+    }
+}
