@@ -5,9 +5,11 @@ on the MacBook. It prewarms after focus settles and caches four exact
 process/window contexts for 15 seconds, with a ten-second active refresh timer.
 423 XCTest tests (10 skipped) and 19 Python tests passed. Installed/mapped
 executable, health/doctor, UW and configuration preservation verified. The user
-has been asked to repeat three focused Ardia searches and one cross-app search.
-Read `menu-metrics` before any reset; cacheHit/cacheMiss distinguish openings.
-Interactive speedup is pending; retain baseline in
+confirmed “feels faster.” All four controlled openings were cache hits: focused
+median 37.6 ms vs 187.9 ms baseline, cross-app 111.4 ms vs 314.3 ms. Real Find
+execution was confirmed on both a later miss (256.5 ms) and a hit (34.2 ms),
+with user acceptance and no alerts. Read `menu-metrics` before any reset;
+cacheHit/cacheMiss distinguish openings. Retain baseline in
 `/private/tmp/zonal-menu-live-samples-_js20tok/`. Cache build/evidence/rollback:
 `docs/app-commands.md`, `/private/tmp/zonal-menu-cache/`.
 

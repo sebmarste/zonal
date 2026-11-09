@@ -581,3 +581,30 @@ Executable SHA-256: `ccb34fe87a353304ca2bf88adc4f880f22090870b6d727751ab4275bdab
 ZIP SHA-256: `0e8f2b90a833c052690183b611d4d7fe91bf80d6b2137853cf1f41a712be148f`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-cache-ULhlM68N`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-cache/`.
+
+
+## Cache trial live comparison, 2026-11-09
+
+The user repeated the four interactions and reported **“Done—feels faster.”**
+All four controlled openings were cache hits, with no AX discovery on the
+opening path. Focused tracking times were 59.015, 25.912 and 37.605 ms (median
+37.605 ms), versus 249.157, 179.856 and 187.917 ms (median 187.917 ms) before.
+That is an observed 80% lower focused median in this small sample. The requested
+cross-app opening tracked at 111.407 ms, versus 314.317 ms before (65% lower).
+Grouping follows the requested test order; samples do not encode app/window IDs.
+Native tracking remains a proxy rather than measured physical presentation.
+
+The first subsequent real Find test was a cache miss: 148.970 ms discovery,
+256.460 ms tracking; diagnostics confirmed execution and the user saw Find open
+without an alert. It is excluded from the controlled cache-hit comparison.
+A repeated check with Ardia focused for one second was a cache hit: tracking
+34.210 ms, execution=confirmed in diagnostics, and the user again confirmed
+Find opened without an alert. Both hit and miss execution paths now have live
+acceptance. Cache misses remain slower; no universal/cold-opening speedup is
+claimed. Initial draw readings are no longer fabricated from later search draws.
+
+Raw controlled samples, comparison, chart, later hit/miss metrics and execution
+diagnostics: `/private/tmp/zonal-menu-cache/evidence/` (`interactive-menu-metrics.json`,
+`cache-comparison.json`, `cache-comparison.html`, `after-command-*`, `warm-command-*`).
+The recommendation is to retain the scoped, bounded cache trial with its existing
+15-second presentation freshness limit and strict live command revalidation.
