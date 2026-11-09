@@ -726,13 +726,16 @@ private final class CommandMenuFixture {
     var presses: [AXUIElement] = []
     var outcome: AXError = .success
     var onPress: (() -> Void)?
+    var onAttribute: (() -> Void)?
+    var onMenuRead: (() -> Void)?
     lazy var reader = AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
+        self.onAttribute?()
         if name == kAXFocusedApplicationAttribute {
             let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
             return AXUIElementCreateApplication(pid)
         }
         if name == kAXFocusedWindowAttribute { return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098) }
-        if name == kAXMenuBarAttribute { Thread.sleep(forTimeInterval: self.menuReadDelay); return self.bar }
+        if name == kAXMenuBarAttribute { self.onMenuRead?(); Thread.sleep(forTimeInterval: self.menuReadDelay); return self.bar }
         if name == kAXChildrenAttribute {
             if CFEqual(element, self.bar) { return [self.file] as CFArray }
             if CFEqual(element, self.file) { return [self.menu] as CFArray }
@@ -1448,5 +1451,104 @@ extension ConfigurationTests {
             XCTAssertTrue((upward ? menu.items.first : menu.items.last)?.view === session.results)
             XCTAssertTrue((upward ? menu.items.last : menu.items.first)?.view?.subviews.contains(session.search) == true)
         }
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testReviewSelectionSurvivesQueryReopen() async throws {
+        let root = NSMenu()
+        var executed: String?
+        root.addItem(ZoneTabMenuItem(title: "Move Left") { executed = "left" })
+        root.addItem(ZoneTabMenuItem(title: "Move Right") { executed = "right" })
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        var opens = 0
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            if opens == 1 {
+                session.setQuery("move")
+                session.input(key: 125, text: nil, flags: [])
+                XCTAssertEqual(session.results.selectedItem?.title, "Move Right")
+            } else {
+                XCTAssertEqual(session.results.selectedItem?.title, "Move Right", "Reopening the same query must keep keyboard selection")
+                session.input(key: 36, text: nil, flags: [])
+            }
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        await Task.yield()
+        XCTAssertEqual(opens, 2)
+        XCTAssertEqual(executed, "right", "Return must execute the command selected with Down")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuConfigurationAndReopeningNeverReadAXOnMainThread() async throws {
+        let fixture = CommandMenuFixture()
+        let reader = fixture.reader
+        fixture.onAttribute = { XCTAssertFalse(Thread.isMainThread, "Foreign AX must not block menu rendering") }
+        let controller = AppCommandsController(makeReader: { _, _ in reader })
+        defer { controller.close() }
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        // The test's fake target is not a real frontmost process.
+        session.canPresent = { true }
+        let prepared = expectation(description: "Background focus validation and discovery")
+        let responsive = expectation(description: "Main actor can run during a slow AX read")
+        fixture.onAttribute = {
+            XCTAssertFalse(Thread.isMainThread)
+            if Thread.isMainThread { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        session.prepare { prepared.fulfill() }
+        TabContextMenuSession.deliver { responsive.fulfill() }
+        await fulfillment(of: [responsive], timeout: 0.2)
+        await fulfillment(of: [prepared], timeout: 3)
+        session.setQuery("duplicate")
+        let selected = try XCTUnwrap(session.results.selectedItem)
+        let rows = session.results.rows.compactMap(\.item)
+        session.rebuild()
+        XCTAssertTrue(session.results.selectedItem === selected)
+        XCTAssertEqual(session.results.rows.compactMap(\.item).map(ObjectIdentifier.init), rows.map(ObjectIdentifier.init))
+        session.setQuery("file duplicate")
+        XCTAssertTrue(session.results.rows.compactMap(\.item).allSatisfy { item in rows.contains { $0 === item } },
+                      "Filtering reuses the snapshot's command items and icons")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testBufferedQueryUsesOpeningDirectionAndRejectsChangedWindowAfterDiscovery() async throws {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Duplicate Zonal") {})
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        session.setQuery("duplicate")
+        XCTAssertEqual(session.results.selectedItem?.title, "Duplicate Zonal")
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            session.menuWillOpen(menu)
+            XCTAssertEqual(session.results.selectedItem?.title, "File › Duplicate")
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+
+        let changed = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let cancelled = expectation(description: "Window changed during discovery")
+        changed.onInventory = { _ in XCTFail("Stale inventory was installed") }
+        changed.onClose = { cancelled.fulfill() }
+        // Use the attribute hook at the menu-bar read, after readiness succeeded.
+        fixture.onMenuRead = { fixture.windowCurrent = false }
+        changed.prepare { XCTFail("Stale menu presented") }
+        await fulfillment(of: [cancelled], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
     }
 }

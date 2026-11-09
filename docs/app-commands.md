@@ -393,3 +393,25 @@ Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-native-me
 Artifact/provenance/evidence: `/private/tmp/zonal-native-menu-spacing/`.
 The abandoned scrolling-edge refinement no longer needs a screenshot or further
 acceptance; native margins and the fixed Search separator are intentional.
+
+
+## Review fixes, 2026-11-09
+
+Filtering now retains the selected command through the native close/reopen pass
+when the query and direction are unchanged. A new regression spans two tracking
+passes: type Move, press Down, let the menu reopen, then Return must still run
+Move Right. Buffered queries use the actual opening direction.
+
+Opening context comes from the tracker's captured AX window. Configuration,
+presentation guards, diagnostics and execution focus-return checks no longer do
+foreign AX reads on the main actor. Focus validation runs on the reader queue;
+app/key-window ownership is checked again after asynchronous replies. A final
+background window check rejects context changes during discovery. Execution still
+revalidates command identity, enabled state and focus before one AXPress.
+
+Each opening retains native category items and a flattened search-item inventory,
+including icon canvases. Filtering reuses those objects, and resizing an unchanged
+query avoids reloading the table. No cross-opening AX cache is introduced.
+`./scripts/check` passed 414 XCTest tests (10 skipped) and 19 Python tests.
+This is deterministic evidence; installed-app and live timing evidence follow
+separately after signed delivery.

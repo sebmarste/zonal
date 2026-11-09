@@ -242,8 +242,18 @@ final class AppCommandExecution {
         // Never take focus back from another app or another document.
         let active = NSWorkspace.shared.frontmostApplication?.processIdentifier
         if menuOwnedFocus, active == ProcessInfo.processInfo.processIdentifier,
-           (NSApp.keyWindow == nil || NSApp.keyWindow === menuKeyWindow), reader.windowContextMatches() == true {
-            focusWindow(begin)
+           (NSApp.keyWindow == nil || NSApp.keyWindow === menuKeyWindow) {
+            reader.queue.async { [self] in
+                let matches = reader.windowContextMatches()
+                TabContextMenuSession.deliver { [self] in
+                    // Focus may change while the AX reply is in flight.
+                    if matches == true,
+                       NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                       NSApp.keyWindow == nil || NSApp.keyWindow === menuKeyWindow {
+                        focusWindow(begin)
+                    } else { begin() }
+                }
+            }
         } else { begin() }
     }
 }
@@ -490,7 +500,10 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     let results = TabMenuResultsView()
     private let searchItem = NSMenuItem()
     private let resultsItem = NSMenuItem()
-    private var nodes: [AppCommandNode] = []
+    private var appItems: [NSMenuItem] = []
+    private var searchableAppItems: [NSMenuItem] = []
+    private var resultsQuery: String?
+    private var resultsOpenUpward = false
     private var closed = false
     private var reopenAfterQuery = false
     private var didNotifyClose = false
@@ -582,8 +595,10 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                     }
                     reader.queue.async { [weak self] in
                         let (nodes, complete) = reader.read()
+                        let current = reader.windowContextMatches() != false
                         Self.deliver {
                             guard let self, !self.closed else { return }
+                            guard current else { self.cancel(); self.notifyClosed(); return }
                             self.setNodes(nodes, complete: complete)
                             self.isPreparing = false
                             self.onQueryChanged?()
@@ -617,6 +632,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     }
     func setQuery(_ value: String) {
         guard !closed, query != value else { return }
+        resultsQuery = nil
         query = value
         search.stringValue = value
         onQueryChanged?()
@@ -631,7 +647,11 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         // The menu is a frozen snapshot while tracking: no loading-induced resize,
         // scroll changes, replaced mouse targets, or lost keyboard selection.
         guard !closed, !isTracking else { return }
-        nodes = value.filter { !$0.isAppleMenu }
+        let nodes = value.filter { !$0.isAppleMenu }
+        appItems = nodes.map { item(for: $0, fullPath: false) }
+        searchableAppItems = nodes.flatMap { [$0] + $0.descendants }
+            .filter { !$0.isMenu }.map { item(for: $0, fullPath: true) }
+        resultsQuery = nil
         onInventory?("categories=\(nodes.count) commands=\(nodes.flatMap { [$0] + $0.descendants }.filter { !$0.isMenu }.count) complete=\(complete)")
         rebuild()
     }
@@ -647,7 +667,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         guard !isTracking else { return }
         menu.removeAllItems()
         if query.isEmpty {
-            var app = nodes.map { item(for: $0, fullPath: false) }
+            var app = appItems
             if reader == nil { app = [info(unavailableReason)] }
             else if app.isEmpty { app = [info("App did not expose any menus")] }
             appendSections([.search: [searchItem], .zonal: zonalItems, .app: app])
@@ -662,10 +682,12 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         menu.update()
     }
     private func updateResults() {
+        // Reopening for size alone must preserve the selected command and row objects.
+        guard resultsQuery != query || resultsOpenUpward != opensUpward else { return }
+        resultsQuery = query
+        resultsOpenUpward = opensUpward
         let zonal = zonalItems.filter { matches($0.title) }
-        let app = nodes.flatMap { [$0] + $0.descendants }
-            .filter { !$0.isMenu && matches($0.path.display + " " + $0.shortcut) }
-            .map { item(for: $0, fullPath: true) }
+        let app = searchableAppItems.filter { matches($0.title + " " + (($0 as? ZoneTabMenuItem)?.displayedShortcut ?? "")) }
         let groups = opensUpward ? [app, zonal] : [zonal, app]
         var rows: [TabMenuResultsView.Row] = []
         for group in groups where !group.isEmpty {
@@ -784,6 +806,10 @@ final class AppCommandsController {
     private var timer: Timer?
     private var checkingFocus = false
     private var activationObserver: NSObjectProtocol?
+    private let makeReader: (pid_t, AXUIElement) -> AppCommandReader
+    init(makeReader: @escaping (pid_t, AXUIElement) -> AppCommandReader = { AppCommandReader(pid: $0, window: $1) }) {
+        self.makeReader = makeReader
+    }
     private(set) var isVisible = false
     private(set) var lastInventory = "App menus have not been opened"
     var isCapturingInput: Bool { isVisible || session?.isPreparing == true }
@@ -793,13 +819,15 @@ final class AppCommandsController {
 
     func inspectActiveMenus(_ completion: @escaping @MainActor @Sendable (String) -> Void) {
         guard let active = NSWorkspace.shared.frontmostApplication else { completion("No active app"); return }
-        let app = AXUIElementCreateApplication(active.processIdentifier)
-        AXUIElementSetMessagingTimeout(app, 0.15)
-        guard let focused = commandAttribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() else {
-            completion("Active app has no readable focused window"); return
-        }
-        let reader = AppCommandReader(pid: active.processIdentifier, window: focused as! AXUIElement)
-        reader.queue.async { [weak self] in
+        let pid = active.processIdentifier
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.15)
+            guard let focused = commandAttribute(app, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+                TabContextMenuSession.deliver { completion("Active app has no readable focused window") }
+                return
+            }
+            let reader = AppCommandReader(pid: pid, window: focused as! AXUIElement)
             let (nodes, complete) = reader.read()
             let context = reader.contextDiagnostic()
             let summary = context + "\ncategories=\(nodes.count) complete=\(complete)\n" + nodes.map {
@@ -812,8 +840,8 @@ final class AppCommandsController {
         }
     }
     func show() { TabContextMenuSession.deliver { [weak self] in _ = self?.openFocusedTabMenu?() } }
-    func configure(_ menu: NSMenu, expectedWindow: AXUIElement,
-                   focusWindow: @escaping (@escaping @MainActor @Sendable () -> Void) -> Void = { $0() },
+    func configure(_ menu: NSMenu, expectedWindow: AXUIElement, openingWindow: AXUIElement? = nil,
+                   focusWindow: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void = { $0() },
                    cancelFocus: @escaping () -> Void = {}) {
         close()
         cancelFocus()
@@ -821,19 +849,23 @@ final class AppCommandsController {
         AXUIElementGetPid(expectedWindow, &targetPID)
         let active = NSWorkspace.shared.frontmostApplication?.processIdentifier
         openingPID = active
-        if let active, let focused = commandAttribute(AXUIElementCreateApplication(active), kAXFocusedWindowAttribute),
-           CFGetTypeID(focused) == AXUIElementGetTypeID() {
-            openingWindow = (focused as! AXUIElement)
-        }
-        let reader = AppCommandReader(pid: targetPID, window: expectedWindow)
-        let valid = active == targetPID && reader.contextIsCurrent()
+        self.openingWindow = openingWindow
+        let reader = makeReader(targetPID, expectedWindow)
         lastInventory = "Preparing focused window menus"
         let session = TabContextMenuSession(menu: menu, reader: reader, application: NSRunningApplication(processIdentifier: targetPID))
         self.session = session
         pid = targetPID
         session.transitionPID = active
         session.cancelFocus = cancelFocus
-        if !valid { session.focusBeforeRead = focusWindow }
+        session.focusBeforeRead = { [weak session] completion in
+            reader.queue.async {
+                let valid = reader.contextIsCurrent()
+                TabContextMenuSession.deliver {
+                    guard let session, session.isPreparing, session.canPresent() else { return }
+                    if valid { completion() } else { focusWindow(completion) }
+                }
+            }
+        }
         session.execution?.focusWindow = focusWindow
         session.execution?.onStatus = { [weak self] status in self?.lastInventory += " execution=\(status)" }
         session.onPreparationFailure = { [weak self] in
@@ -845,7 +877,7 @@ final class AppCommandsController {
         }
         session.canPresent = { [weak self, weak session] in
             guard let self, self.session === session else { return false }
-            return self.currentAppIsAllowed() && reader.windowContextMatches() != false
+            return self.currentAppIsAllowed()
         }
         session.onPreparing = { [weak self] in self?.startWatching(); self?.onVisibilityChanged?() }
         session.onOpen = { [weak self, weak session] in

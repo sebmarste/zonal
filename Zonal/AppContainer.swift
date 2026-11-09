@@ -69,7 +69,7 @@ final class AppContainer: ObservableObject {
             let context = self.workspaceState.currentProfileContext()
             guard let assignment = context.assignments.first(where: { $0.id == id }),
                   let window = self.windowRegistry.bestMatch(for: assignment, in: context.windows) else { return }
-            self.appCommands.configure(menu, expectedWindow: window.element,
+            self.appCommands.configure(menu, expectedWindow: window.element, openingWindow: self.windowTracker.focusedWindow?.element,
                 focusWindow: { [weak self] completion in self?.windowController.focus(window, completion: completion) },
                 cancelFocus: { [weak self] in self?.workspaceState.cancelPendingFocus() })
         },
