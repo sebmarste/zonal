@@ -5,8 +5,12 @@ installed on the MacBook. 417 XCTest tests (10 skipped) and 19 Python tests
 passed. Installed/mapped executable, health/doctor, UW and configuration
 preservation verified. `menu-metrics` reads bounded phase timings in memory;
 `reset-menu-metrics` clears them. Direct Ardia inventory measured 150.163 ms,
-but the native recorder was empty and the user cannot test now. Interactive
-opening/search baseline is pending; preserve recorded samples before reset.
+and the user has now completed the interactive baseline: focused opening to
+tracking 180–249 ms (discovery 145–158 ms), cross-app tracking 314 ms. Search
+draw callback median 45.5 ms across 16 inputs. Initial-menu draw hooks missed
+the initial draw and included user idle time; discard those openToDraw samples.
+Read the latest `docs/app-commands.md` section and preserve raw samples in
+`/private/tmp/zonal-menu-live-samples-_js20tok/` before any reset.
 Read `docs/app-commands.md` and `/private/tmp/zonal-menu-timings/evidence/`.
 No performance optimizations were added with the instrumentation.
 

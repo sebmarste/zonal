@@ -490,3 +490,42 @@ ZIP SHA-256: `49971b2c03204bdffc5eb1be31a6203dd77c75c59a4f5228eb43ba140b08617f`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-timings-ekwzyfTb`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-timings/` (including
 `evidence/baseline-summary.json`, inventory probes and empty native readback).
+
+
+## Interactive baseline, 2026-11-09
+
+The user completed the requested samples on the installed `a027486` build.
+Readback preserved 115 samples from five sessions. Four contain the complete
+four-character search; one extra unfiltered opening (59.001 ms tracking,
+36.920 ms discovery) is excluded from the search protocol comparison. Mapping
+the first three search sessions to already-focused and the last to cross-app
+uses the requested test order; timing samples do not independently identify the
+application or window. Raw readback and analysis remain in
+`/private/tmp/zonal-menu-live-samples-_js20tok/` (`after.json`, `analysis.json`,
+`timings.html`). No focus changes or commands were issued during collection.
+
+Already-focused opening → native tracking: 249.157, 179.856, 187.917 ms.
+Corresponding AX discovery: 151.688, 145.438, 157.828 ms. Combined construction,
+item/icon preparation and layout: 67.031 ms first, then 21.022 and 22.189 ms.
+The last search opening tracked at 314.317 ms, including 80.516 ms of focus
+handoff/readiness and 143.742 ms of AX discovery. The first sample is the first
+recorded opening, not a proven cold application launch.
+
+Across 16 character inputs, median key → result-model update was 16.984 ms;
+key → tracking was 22.266 ms; key → filtered-result draw callback was 45.517 ms
+(range 18.759–69.597 ms). These are overlapping end-to-end intervals and must
+not be added together.
+
+Measurement limitation: all four `openToDraw` samples arrived only after typing
+began (`queryLength=1`), 1.167–2.136 s after opening. The hooks did not observe
+the initial unfiltered menu draw, so those values include user idle time and are
+excluded as initial-display latency. The reliable opening proxy here is native
+tracking, not physical display. Query draw callbacks remain separately useful.
+Future instrumentation must avoid treating the later search draw as an initial
+unfiltered draw. No optimization decision should use these discarded values.
+
+Measured priority: remove fresh AX discovery from the warm opening's critical
+path via a short-lived, exact-window prewarmed presentation snapshot, while
+retaining strict execution-time validation. Reducing scan round trips is next;
+search resize work is secondary at this baseline. These are proposed next steps,
+not implemented optimizations or measured speedups.
