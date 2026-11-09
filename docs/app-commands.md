@@ -364,3 +364,17 @@ margin remains fixed, and its public SDK interface has no padding/inset control.
 The available CUA desktop surfaces are on the Mini, without a MacBook/Screen
 Sharing surface. A screenshot identifying the exact visible gap is needed before
 another implementation change or a different menu-host approach.
+
+
+## Return to native edge spacing, 2026-11-09
+
+The user accepted retaining the old approach instead of further custom edge
+behavior, especially across opening directions. The extra four-point scrollable
+inset and its document wrapper are removed. Results again use the table directly
+as the scroll document, with the previously accepted compact rows and viewport
+sizing/reset behavior. The fixed separator beside Search is retained. Native
+macOS outer margins stay standard. No custom menu host or private padding API
+is introduced; no screenshot is required to pursue the abandoned refinement.
+`./scripts/check` passed 411 XCTest tests (10 skipped, zero failures) and 19 Python
+tests, covering native document geometry, scrolling/filter reset and fixed Search
+separator placement in both opening directions.
