@@ -1,5 +1,15 @@
 # Mac mini continuation
 
+Latest review-fix build (2026-11-09): `5cd4a53` is signed/notarized and installed
+on the MacBook. Selection survives native menu resizing; foreign AX focus reads
+run off the UI thread, including configuration, diagnostics and execution focus
+return. Each opening reuses native items/icons during filtering. 414 XCTest
+tests (10 skipped) and 19 Python tests passed. Installed/mapped executable,
+health, doctor, UW/config preservation and complete live Ardia discovery were
+verified. Interactive keyboard acceptance and measured live rendering speed
+remain unverified. Evidence/rollback: `docs/app-commands.md`,
+`/private/tmp/zonal-menu-review-fixes/`.
+
 Current native-spacing build (2026-11-09): `7cea940` is signed/notarized
 and installed on the MacBook. The user chose the old native edge approach. The
 extra scrolling inset/document wrapper is removed; accepted compact rows,

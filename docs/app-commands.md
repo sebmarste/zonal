@@ -415,3 +415,19 @@ query avoids reloading the table. No cross-opening AX cache is introduced.
 `./scripts/check` passed 414 XCTest tests (10 skipped) and 19 Python tests.
 This is deterministic evidence; installed-app and live timing evidence follow
 separately after signed delivery.
+
+
+Review-fix source `5cd4a53718fa82df41f01e8bc2c754a6288a9279` was Developer ID
+signed for arm64 and x86_64, accepted under notarization submission
+`0590eefc-99c1-42da-a83d-e2b1fe7b997d`, stapled and installed on the MacBook.
+Strict signature, ticket, Gatekeeper, executable hash, single running process
+(PID 94252) and mapped installed executable were verified. All four health flags
+were true; all doctor findings were OK, UW remained active, and configuration
+bytes matched the pre-install backup. A read-only live Ardia inventory was
+complete (10 categories). This confirms installation/runtime health and menu
+discovery, not interactive Return behavior or measured rendering latency.
+
+Executable SHA-256: `8b45271b4f907cf55676e5434f5ab8633c742fa15fbde426f06c949584ede40c`.
+ZIP SHA-256: `1ad6c29cc8ef8b2b6e32c2a728344a172e5cea766dd8e297f2dd259e5351404c`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-review-fixes-8xxqcjq6`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-review-fixes/`.
