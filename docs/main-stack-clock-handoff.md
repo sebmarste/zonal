@@ -1,5 +1,15 @@
 # Mac mini continuation
 
+Current native-spacing build (2026-11-09): `7cea940` is signed/notarized
+and installed on the MacBook. The user chose the old native edge approach. The
+extra scrolling inset/document wrapper is removed; accepted compact rows,
+filter/scroll clipping fixes, Search separator, icons, shortcuts and focus fixes
+remain. 411 XCTest tests (10 skipped) and 19 Python tests passed. Exact installed
+executable/mapped path, health, UW/settings and live menu discovery were verified.
+This supersedes screenshot/visual requests for the abandoned scrolling-edge
+experiment. Evidence/rollback: `docs/app-commands.md`,
+`/private/tmp/zonal-native-menu-spacing/`.
+
 Latest edge-spacing build (2026-11-09): `3455ae1` is signed/notarized
 and installed on the MacBook. The four-point top content inset lives inside the
 scroll document and moves away with scrolling; the separator beside Search stays

@@ -378,3 +378,18 @@ is introduced; no screenshot is required to pursue the abandoned refinement.
 `./scripts/check` passed 411 XCTest tests (10 skipped, zero failures) and 19 Python
 tests, covering native document geometry, scrolling/filter reset and fixed Search
 separator placement in both opening directions.
+
+
+Native-spacing source `7cea9403b54e2d840441fb74cee608c7553de464` was Developer ID signed for
+both architectures and accepted under notarization submission `13e88eb4-c206-45e2-95dc-897c8830373e`.
+Installed signature, staple, Gatekeeper, hash and mapped executable were verified
+(one process, PID 48461), with all health/doctor findings OK, UW active and
+configuration bytes matching the backup. The live focused-app menu read was
+complete. No new visual success is inferred from those runtime checks; this is
+the user's chosen return to native edge behavior, not another scrolling-edge fix.
+Executable SHA-256: `233185a022f02add883baa8906c35e105e5bbd08ee0a49225e2baf7668711ff9`.
+ZIP SHA-256: `b3bd9193b296a0a5bbd6c225ec6e4257e902a10b849f00f2356527625efcea9c`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-native-menu-spacing-9S4FPNRy`.
+Artifact/provenance/evidence: `/private/tmp/zonal-native-menu-spacing/`.
+The abandoned scrolling-edge refinement no longer needs a screenshot or further
+acceptance; native margins and the fixed Search separator are intentional.
