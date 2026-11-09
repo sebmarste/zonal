@@ -1,5 +1,15 @@
 # Mac mini continuation
 
+Latest measurement build (2026-11-09): `a027486` is signed/notarized and
+installed on the MacBook. 417 XCTest tests (10 skipped) and 19 Python tests
+passed. Installed/mapped executable, health/doctor, UW and configuration
+preservation verified. `menu-metrics` reads bounded phase timings in memory;
+`reset-menu-metrics` clears them. Direct Ardia inventory measured 150.163 ms,
+but the native recorder was empty and the user cannot test now. Interactive
+opening/search baseline is pending; preserve recorded samples before reset.
+Read `docs/app-commands.md` and `/private/tmp/zonal-menu-timings/evidence/`.
+No performance optimizations were added with the instrumentation.
+
 Latest review-fix build (2026-11-09): `5cd4a53` is signed/notarized and installed
 on the MacBook. Selection survives native menu resizing; foreign AX focus reads
 run off the UI thread, including configuration, diagnostics and execution focus

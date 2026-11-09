@@ -464,3 +464,29 @@ by session and report sample count, median and maximum; retain cold first-open
 separately. `app-menus` also reports `inventoryReadMilliseconds` for a direct
 read-only AX inventory probe. That probe excludes focus handoff, native menu
 construction/presentation and input, so it is not an end-to-end menu measurement.
+
+
+Measurement source `a0274862265976c438715b4ec1fcb2ea9c535d8c` passed 417 XCTest
+tests (10 skipped) and 19 Python tests. The universal Developer ID build was
+accepted under notarization submission `d40ca46f-a577-4da3-b905-e98b3cbea72b`,
+stapled, installed and verified on the MacBook. Strict/deep signature,
+Gatekeeper, installed binary hash, single running process (PID 95110), mapped
+installed executable, all runtime health/doctor flags, UW and configuration
+preservation were confirmed. No public release was published.
+
+First recorded Ardia inventory probe: 150.163 ms, complete, ten categories.
+Focus then changed to T3 Code (`com.t3tools.t3code`); five additional complete
+inventory probes measured 49.554, 36.904, 20.383, 19.862 and 18.965 ms (median
+20.383 ms). These are different applications and read-only inventory probes,
+not equivalent end-to-end menu samples or a demonstrated optimization gain.
+The native recorder was empty. The user cannot perform the requested four
+right-click/search samples now, so interactive baseline collection is pending;
+recording remains enabled for normal use, until restart or the 256-sample limit.
+Read `menu-metrics` on continuation; do not reset before preserving its samples.
+No UI interactions or focus changes were automated to manufacture a baseline.
+
+Executable SHA-256: `3b45c11b5947d7512c6e2fcdeea45c87f37aa759e6b3bf71123c27bdc8c4b6a7`.
+ZIP SHA-256: `49971b2c03204bdffc5eb1be31a6203dd77c75c59a4f5228eb43ba140b08617f`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-timings-ekwzyfTb`.
+Artifact/provenance/evidence: `/private/tmp/zonal-menu-timings/` (including
+`evidence/baseline-summary.json`, inventory probes and empty native readback).
