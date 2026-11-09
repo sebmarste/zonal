@@ -895,19 +895,19 @@ extension ConfigurationTests {
             let height = root.size.height
             let anchor = upward ? root.items.last : root.items.first
             session.setQuery("file duplicate")
-            XCTAssertEqual(session.results.frame.height, 48)
+            XCTAssertEqual(session.results.frame.height, 52)
             XCTAssertLessThan(root.size.height, height)
             let twoResultsHeight = root.size.height
             for query in ["fit", "no such command"] {
                 session.setQuery(query)
-                XCTAssertEqual(session.results.frame.height, 24)
+                XCTAssertEqual(session.results.frame.height, 28)
                 XCTAssertLessThan(root.size.height, twoResultsHeight)
                 XCTAssertTrue((upward ? root.items.last : root.items.first) === anchor)
             }
-            session.maximumResultsHeight = 24
+            session.maximumResultsHeight = 28
             session.setQuery("file duplicate")
-            XCTAssertEqual(session.results.contentHeight, 48)
-            XCTAssertEqual(session.results.frame.height, 24)
+            XCTAssertEqual(session.results.contentHeight, 52)
+            XCTAssertEqual(session.results.frame.height, 28)
             XCTAssertNotNil(session.results.selectedItem)
             session.setQuery("")
             XCTAssertEqual(root.size.height, height, accuracy: 0.5)
@@ -1377,8 +1377,8 @@ extension ConfigurationTests {
         results.layoutSubtreeIfNeeded()
         XCTAssertEqual(results.table.style, .plain)
         XCTAssertFalse(results.automaticallyAdjustsContentInsets)
-        XCTAssertEqual(results.contentHeight, results.table.rect(ofRow: rows.count - 1).maxY)
-        XCTAssertTrue(rows.indices.contains { abs(results.table.rect(ofRow: $0).maxY - results.contentSize.height) < 0.5 })
+        XCTAssertEqual(results.contentHeight, 4 + results.table.rect(ofRow: rows.count - 1).maxY)
+        XCTAssertTrue(rows.indices.contains { abs(4 + results.table.rect(ofRow: $0).maxY - results.contentSize.height) < 0.5 })
         XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
         for _ in 0..<40 { results.move(1) }
         XCTAssertTrue(results.selectedItem === items.last)
@@ -1387,7 +1387,7 @@ extension ConfigurationTests {
         results.setRows([.init(item: items[0])])
         results.fit(maximumHeight: 167)
         results.layoutSubtreeIfNeeded()
-        XCTAssertEqual(results.frame.height, 24)
+        XCTAssertEqual(results.frame.height, 28)
         XCTAssertEqual(results.contentView.bounds.origin.y, 0, accuracy: 0.5)
         XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
     }
@@ -1404,14 +1404,49 @@ extension ConfigurationTests {
             let header = try XCTUnwrap(upward ? menu.items.last?.view : menu.items.first?.view)
             XCTAssertEqual(header.frame.height, 34)
             XCTAssertTrue(header.bounds.contains(session.search.frame))
-            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 1)
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 2)
             session.setQuery("duplicate")
-            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 0)
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 1)
             let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0) as? TabMenuResultCell)
             let host = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
             cell.frame = host.bounds; host.addSubview(cell); host.layoutSubtreeIfNeeded()
             for child in cell.subviews { XCTAssertTrue(cell.bounds.contains(child.frame)) }
             XCTAssertTrue(cell.shortcut.frame.maxX <= cell.bounds.maxX - 16)
+        }
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testTopContentInsetScrollsAwayWhileSearchSeparatorRemainsOutside() throws {
+        let results = TabMenuResultsView()
+        let items = (0..<20).map { ZoneTabMenuItem(title: "Command \($0)") {} }
+        results.setRows(items.map { .init(item: $0) })
+        results.fit(maximumHeight: 124)
+        results.layoutSubtreeIfNeeded()
+        let document = try XCTUnwrap(results.documentView)
+        XCTAssertFalse(document === results.table)
+        XCTAssertEqual(results.table.frame.minY, 4)
+        XCTAssertEqual(results.contentView.bounds.minY, 0)
+        for _ in 0..<20 { results.move(1) }
+        XCTAssertGreaterThan(results.contentView.bounds.minY, 4)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 19)))
+        results.setRows([.init(item: items[0])])
+        results.fit(maximumHeight: 124)
+        XCTAssertEqual(results.contentView.bounds.minY, 0)
+        XCTAssertEqual(results.frame.height, 28)
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let menu = NSMenu()
+            let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: true)
+            session.setQuery("duplicate")
+            XCTAssertEqual(menu.items.count, 3)
+            XCTAssertTrue(menu.items[1].isSeparatorItem)
+            XCTAssertTrue((upward ? menu.items.first : menu.items.last)?.view === session.results)
+            XCTAssertTrue((upward ? menu.items.last : menu.items.first)?.view?.subviews.contains(session.search) == true)
         }
     }
 }

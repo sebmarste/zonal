@@ -326,7 +326,22 @@ ZIP SHA-256: `db2a27d7b8b5afe0c4c4bd358e20408b66a5b1e1c7cdcf1639b1dbc571099f6f`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-menu-spacing-VeGiHEFw`.
 Artifact/provenance/evidence: `/private/tmp/zonal-menu-spacing/`.
 
-The user has been asked to scroll a long filtered list to the end, then narrow
-the filter, and check first/last-row visibility and compact spacing. Live visual
-acceptance of this spacing update is pending; the earlier Find/no-tooltip
+The user performed the long-list/scroll/filter check and confirmed **“looks
+correct now.”** This supplies live acceptance of the compact spacing/clipping
+repair; the earlier Find/no-tooltip
 acceptance applies to the preceding repair and is recorded separately.
+
+
+## Scrolling top inset and fixed Search separator, 2026-11-09
+
+The user requested that top content spacing scroll with results, with a fixed
+separator beside Search. A flipped document container now owns the four-point
+top inset; the table sits below it inside the scrolling document. Scrolling
+moves that inset out of view, while filtering resets it to the initial position.
+The native Search separator stays outside the results scroll view in either
+opening direction. macOS's small native outer menu margin remains unchanged.
+Actual row bounds still determine the viewport, including the inset, so the
+first/last commands stay fully reachable. Icons, text size, selection and command
+context behavior are unchanged. `./scripts/check` passed 411 XCTest tests
+(10 skipped, zero failures) and 19 Python tests, including inset scrolling,
+filter reset, last-row visibility and fixed separator placement.
