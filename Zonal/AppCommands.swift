@@ -347,7 +347,7 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     let table: NSTableView = Table()
     private(set) var rows: [Row] = []
     var activate: ((NSMenuItem) -> Void)?
-    var contentHeight: CGFloat { rows.reduce(0) { $0 + ($1.item == nil ? 8 : 28) } }
+    var contentHeight: CGFloat { rows.isEmpty ? 0 : table.rect(ofRow: rows.count - 1).maxY }
     var selectedItem: NSMenuItem? {
         rows.indices.contains(table.selectedRow) ? rows[table.selectedRow].item : nil
     }
@@ -356,12 +356,19 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
         drawsBackground = false
         contentView.drawsBackground = false
         borderType = .noBorder
+        automaticallyAdjustsContentInsets = false
+        contentInsets = NSEdgeInsetsZero
+        verticalScrollElasticity = .none
+        horizontalScrollElasticity = .none
         hasVerticalScroller = true
         autohidesScrollers = true
         scrollerStyle = .overlay
         table.headerView = nil
         table.backgroundColor = .clear
-        table.rowHeight = 28
+        table.style = .plain
+        table.rowSizeStyle = .custom
+        table.usesAutomaticRowHeights = false
+        table.rowHeight = 24
         table.intercellSpacing = .zero
         table.allowsMultipleSelection = false
         table.allowsEmptySelection = true
@@ -380,12 +387,24 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     func setRows(_ value: [Row]) {
         rows = value
         table.reloadData()
+        table.frame.size.height = contentHeight
+        contentView.scroll(to: .zero)
+        reflectScrolledClipView(contentView)
         if let first = rows.firstIndex(where: \.enabled) { select(first) }
         else { table.deselectAll(nil) }
     }
     func fit(maximumHeight: CGFloat) {
-        frame.size.height = min(maximumHeight, contentHeight)
+        // Use actual row bounds, not a separate estimate; leave no half-row
+        // at the initial viewport edge when the result list needs scrolling.
+        let fullHeight = contentHeight
+        let ends = rows.indices.map { table.rect(ofRow: $0).maxY }
+        let lastWholeRow = ends.last { $0 <= maximumHeight } ?? min(maximumHeight, fullHeight)
+        frame.size.height = min(fullHeight, lastWholeRow)
+        tile()
+        table.frame.size = NSSize(width: contentSize.width, height: fullHeight)
+        contentView.scroll(to: .zero)
         if table.selectedRow >= 0 { table.scrollRowToVisible(table.selectedRow) }
+        reflectScrolledClipView(contentView)
     }
     private func select(_ index: Int) {
         table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
@@ -405,10 +424,10 @@ final class TabMenuResultsView: NSScrollView, NSTableViewDataSource, NSTableView
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { rows[row].enabled }
     func tableView(_ tableView: NSTableView, shouldShowCellExpansionFor tableColumn: NSTableColumn?, row: Int) -> Bool { false }
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { rows[row].item == nil ? 8 : 28 }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { rows[row].item == nil ? 6 : 24 }
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { SelectedRow() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = TabMenuResultCell(frame: NSRect(x: 0, y: 0, width: tableView.bounds.width, height: 28))
+        let cell = TabMenuResultCell(frame: NSRect(x: 0, y: 0, width: tableView.bounds.width, height: 24))
         cell.textField?.stringValue = rows[row].title
         cell.textField?.textColor = rows[row].enabled ? .labelColor : .disabledControlTextColor
         cell.shortcut.stringValue = rows[row].shortcut
@@ -454,7 +473,7 @@ final class TabMenuResultCell: NSTableCellView {
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(equalTo: shortcut.leadingAnchor, constant: -16),
-            shortcut.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            shortcut.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             shortcut.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
@@ -467,7 +486,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     let reader: AppCommandReader?
     let execution: AppCommandExecution?
     let zonalItems: [NSMenuItem]
-    let search = TabMenuSearchField(frame: NSRect(x: 12, y: 8, width: 296, height: 26))
+    let search = TabMenuSearchField(frame: NSRect(x: 12, y: 5, width: 296, height: 24))
     let results = TabMenuResultsView()
     private let searchItem = NSMenuItem()
     private let resultsItem = NSMenuItem()
@@ -514,7 +533,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.minimumWidth = 320
         menu.delegate = self
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 42))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 34))
         search.placeholderString = "Search commands…"
         search.setAccessibilityLabel("Search commands — type to filter")
         search.clear = { [weak self] in self?.setQuery("") }
@@ -586,7 +605,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         guard !closed, canPresent() else { cancel(); notifyClosed(); return }
         opensUpward = TabContextMenuPolicy.opensUpward(at: point, visibleFrame: visibleFrame, menuHeight: menu.size.height)
         let space = opensUpward ? visibleFrame.maxY - point.y : point.y - visibleFrame.minY
-        maximumResultsHeight = min(420, max(28, space - 80))
+        maximumResultsHeight = min(420, max(24, space - 34 - 16))
         repeat {
             reopenAfterQuery = false
             rebuild()
@@ -617,11 +636,13 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         rebuild()
     }
     private func appendSections(_ sections: [TabContextMenuPolicy.Section: [NSMenuItem]]) {
+        var previous: TabContextMenuPolicy.Section?
         for section in TabContextMenuPolicy.sections(opensUpward: opensUpward) {
             let items = sections[section] ?? []
             guard !items.isEmpty else { continue }
-            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            if let previous, previous != .search, section != .search { menu.addItem(.separator()) }
             items.forEach(menu.addItem)
+            previous = section
         }
     }
     func rebuild() {
@@ -638,8 +659,8 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         updateResults()
         results.fit(maximumHeight: maximumResultsHeight)
         // The presenter anchors the Search row again after every filtering pass.
-        if opensUpward { menu.addItem(resultsItem); menu.addItem(.separator()); menu.addItem(searchItem) }
-        else { menu.addItem(searchItem); menu.addItem(.separator()); menu.addItem(resultsItem) }
+        if opensUpward { menu.addItem(resultsItem); menu.addItem(searchItem) }
+        else { menu.addItem(searchItem); menu.addItem(resultsItem) }
         menu.update()
     }
     private func updateResults() {

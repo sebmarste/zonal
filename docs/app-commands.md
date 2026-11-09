@@ -292,7 +292,24 @@ Artifact/provenance, failing-before regression and passing checks:
 On the unlocked installed build, the live reader reported target/system/focused
 PID 49865, matching target and focused Quartz window 22471, AXWindow role and a
 readable menu bar. All ten Ardia categories were complete. This verifies live
-window identity and menu discovery, not command execution. The user has been
-asked to test cross-app right-click/Find and absence of hover tooltips on this
-repair. A real cold Ardia relaunch remains separately unverified; do not restart
+window identity and menu discovery, not command execution. The user confirmed **“Menu and Find work; no tooltips”** for the cross-app test
+on this repair. A real cold Ardia relaunch remains separately unverified; do not restart
 the user's browser or discard its windows/tabs to manufacture that test.
+
+
+## Compact spacing and unclipped viewport, 2026-11-09
+
+Search result rows use 24 points (previously 28), group gaps use 6 (previously 8)
+and the Search header uses 34 (previously 42). The redundant native separator
+beside Search is removed; the separator between Zonal and app categories remains.
+Icon and text sizes are unchanged. The shortcut field keeps a scrollbar gutter.
+
+The results table uses explicit plain/custom row geometry, zero automatic content
+insets and no elastic overscroll. Content height comes from actual table row
+rectangles. Capped viewports initially stop at a whole-row boundary. Filtering
+resets the clip origin and sizes the document to its actual row bounds before
+revealing the selected item. Tests verify complete first/last rows, keyboard
+navigation to the end of a long mixed-group list, shrinking from a scrolled list
+to one result, and that compact row/header content stays inside its bounds.
+`./scripts/check` passed 410 XCTest tests (10 skipped, zero failures) and 19 Python
+tests. This deterministic geometry evidence is distinct from live visual checks.

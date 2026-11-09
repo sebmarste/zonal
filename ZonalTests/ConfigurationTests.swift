@@ -895,19 +895,19 @@ extension ConfigurationTests {
             let height = root.size.height
             let anchor = upward ? root.items.last : root.items.first
             session.setQuery("file duplicate")
-            XCTAssertEqual(session.results.frame.height, 56)
+            XCTAssertEqual(session.results.frame.height, 48)
             XCTAssertLessThan(root.size.height, height)
             let twoResultsHeight = root.size.height
             for query in ["fit", "no such command"] {
                 session.setQuery(query)
-                XCTAssertEqual(session.results.frame.height, 28)
+                XCTAssertEqual(session.results.frame.height, 24)
                 XCTAssertLessThan(root.size.height, twoResultsHeight)
                 XCTAssertTrue((upward ? root.items.last : root.items.first) === anchor)
             }
-            session.maximumResultsHeight = 28
+            session.maximumResultsHeight = 24
             session.setQuery("file duplicate")
-            XCTAssertEqual(session.results.contentHeight, 56)
-            XCTAssertEqual(session.results.frame.height, 28)
+            XCTAssertEqual(session.results.contentHeight, 48)
+            XCTAssertEqual(session.results.frame.height, 24)
             XCTAssertNotNil(session.results.selectedItem)
             session.setQuery("")
             XCTAssertEqual(root.size.height, height, accuracy: 0.5)
@@ -1285,16 +1285,16 @@ extension ConfigurationTests {
             var cells: [TabMenuResultCell] = []
             for index in 0..<3 {
                 let cell = try XCTUnwrap(results.tableView(results.table, viewFor: nil, row: index) as? TabMenuResultCell)
-                let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 28))
+                let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
                 cell.frame = host.bounds
                 host.addSubview(cell)
                 host.layoutSubtreeIfNeeded()
-                XCTAssertEqual(cell.imageView?.frame, NSRect(x: 10, y: 6, width: 16, height: 16))
+                XCTAssertEqual(cell.imageView?.frame, NSRect(x: 10, y: 4, width: 16, height: 16))
                 let title = try XCTUnwrap(cell.textField)
                 let titleRect = title.alignmentRect(forFrame: title.frame)
                 let shortcutRect = cell.shortcut.alignmentRect(forFrame: cell.shortcut.frame)
                 XCTAssertEqual(titleRect.minX, 34, accuracy: 0.5)
-                XCTAssertEqual(shortcutRect.maxX, width - 12, accuracy: 0.5)
+                XCTAssertEqual(shortcutRect.maxX, width - 20, accuracy: 0.5)
                 XCTAssertEqual(cell.shortcut.alignment, .right)
                 XCTAssertLessThanOrEqual(titleRect.maxX, shortcutRect.minX - 15.5)
                 cells.append(cell)
@@ -1361,5 +1361,57 @@ extension ConfigurationTests {
         await fulfillment(of: [ready], timeout: 2)
         try? await Task.sleep(for: .milliseconds(500))
         XCTAssertTrue(fixture.presses.isEmpty)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testCompactMenuViewportShowsWholeRowsAndLastRowWithoutClipping() {
+        let results = TabMenuResultsView()
+        let items = (0..<30).map { ZoneTabMenuItem(title: "Command \($0)") {} }
+        var rows = items.map { TabMenuResultsView.Row(item: $0) }
+        rows.insert(.init(item: nil), at: 5)
+        results.setRows(rows)
+        results.fit(maximumHeight: 167)
+        results.layoutSubtreeIfNeeded()
+        XCTAssertEqual(results.table.style, .plain)
+        XCTAssertFalse(results.automaticallyAdjustsContentInsets)
+        XCTAssertEqual(results.contentHeight, results.table.rect(ofRow: rows.count - 1).maxY)
+        XCTAssertTrue(rows.indices.contains { abs(results.table.rect(ofRow: $0).maxY - results.contentSize.height) < 0.5 })
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
+        for _ in 0..<40 { results.move(1) }
+        XCTAssertTrue(results.selectedItem === items.last)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: rows.count - 1)))
+        XCTAssertLessThanOrEqual(results.table.visibleRect.maxY, results.table.bounds.maxY + 0.5)
+        results.setRows([.init(item: items[0])])
+        results.fit(maximumHeight: 167)
+        results.layoutSubtreeIfNeeded()
+        XCTAssertEqual(results.frame.height, 24)
+        XCTAssertEqual(results.contentView.bounds.origin.y, 0, accuracy: 0.5)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
+    }
+
+    @MainActor
+    func testCompactSearchHeaderAndRowsKeepContentInsideBounds() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let menu = NSMenu()
+            menu.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+            let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: true)
+            let header = try XCTUnwrap(upward ? menu.items.last?.view : menu.items.first?.view)
+            XCTAssertEqual(header.frame.height, 34)
+            XCTAssertTrue(header.bounds.contains(session.search.frame))
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 1)
+            session.setQuery("duplicate")
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 0)
+            let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0) as? TabMenuResultCell)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+            cell.frame = host.bounds; host.addSubview(cell); host.layoutSubtreeIfNeeded()
+            for child in cell.subviews { XCTAssertTrue(cell.bounds.contains(child.frame)) }
+            XCTAssertTrue(cell.shortcut.frame.maxX <= cell.bounds.maxX - 16)
+        }
     }
 }
