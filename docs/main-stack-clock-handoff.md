@@ -8,8 +8,9 @@ preventing window ordering. No clock action or popup is introduced. Existing
 clock rendering tests exercise double-click mouse events and first-responder
 stability on every tab edge. Required checks: 425 XCTest tests (10 skipped),
 19 Python tests passed. Installed/mapped executable, ticket, Gatekeeper and
-health/doctor passed; configuration bytes match the backup. Native click
-acceptance is pending the user’s requested left/double/right-click check.
+health/doctor passed; configuration bytes match the backup. The user confirmed
+left/double/right-clicks now produce no reaction: no focus change, selection,
+popup or panel movement.
 Artifact/evidence: `/private/tmp/zonal-passive-clock/`.
 
 Latest review repairs (2026-11-09): `5d64f0c` is signed/notarized and installed
@@ -285,4 +286,6 @@ Executable SHA-256: `1404115a4e600c9ae9f7fe852d7e527fc26028f47e39ee98a72b2df7bfa
 ZIP SHA-256: `115d06a9fde8a5edecdd41ee852621705b865277fa83992e84d357dcc618ae09`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-passive-clock-bREpaSUT`.
 Evidence: `/private/tmp/zonal-passive-clock/evidence/`. Native clock click
-acceptance remains pending; mouse-event fixtures are deterministic evidence.
+acceptance is complete: the user answered “Yes, no reaction now” after the
+left/double/right-click check. This is user-observed runtime acceptance; the
+mouse-event fixtures remain separate deterministic evidence.
