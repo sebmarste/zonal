@@ -675,6 +675,18 @@ struct ZoneTabStripView: View {
     }
 }
 
+// Absorb clock clicks without asking the non-activating panel for keyboard focus.
+final class ZoneTabClockField: NSTextField {
+    override var acceptsFirstResponder: Bool { false }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+    override func rightMouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+    override func otherMouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+}
+
 struct ZoneTabClockLabel: NSViewRepresentable {
     var date: Date
     var stacked = false
@@ -692,7 +704,7 @@ struct ZoneTabClockLabel: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSTextField {
-        let label = NSTextField(labelWithString: "")
+        let label = ZoneTabClockField(labelWithString: "")
         label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.setAccessibilityIdentifier("main-stack-clock")

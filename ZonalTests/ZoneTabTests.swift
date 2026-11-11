@@ -1539,6 +1539,27 @@ final class ZoneTabTests: XCTestCase {
                 host.layoutSubtreeIfNeeded()
                 host.displayIfNeeded()
                 let label = try XCTUnwrap(labels(in: host).first)
+                let passive = try XCTUnwrap(label as? ZoneTabClockField)
+                XCTAssertFalse(passive.acceptsFirstResponder)
+                XCTAssertFalse(passive.needsPanelToBecomeKey)
+                XCTAssertFalse(passive.mouseDownCanMoveWindow)
+                XCTAssertFalse(passive.isSelectable)
+                XCTAssertFalse(passive.isEditable)
+                let responder = panel.firstResponder
+                for type: NSEvent.EventType in [.leftMouseDown, .rightMouseDown, .otherMouseDown] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: .zero,
+                        modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+                    XCTAssertTrue(passive.acceptsFirstMouse(for: event))
+                    XCTAssertTrue(passive.shouldDelayWindowOrdering(for: event))
+                    switch type {
+                    case .leftMouseDown: passive.mouseDown(with: event)
+                    case .rightMouseDown: passive.rightMouseDown(with: event)
+                    default: passive.otherMouseDown(with: event)
+                    }
+                }
+                XCTAssertTrue(panel.firstResponder === responder)
+                XCTAssertFalse(panel.isKeyWindow)
                 XCTAssertEqual(labels(in: host).count, 1)
                 XCTAssertFalse(label.stringValue.isEmpty)
                 XCTAssertEqual(label.stringValue.contains("\n"), edge.isVertical)

@@ -1,5 +1,13 @@
 # Mac mini continuation
 
+Passive clock input repair (2026-11-11): source pending signed delivery. The
+clock label is explicitly non-focusable/non-selectable, refuses panel activation
+and background dragging, and absorbs left/right/other mouse-down events while
+preventing window ordering. No clock action or popup is introduced. Existing
+clock rendering tests exercise double-click mouse events and first-responder
+stability on every tab edge. Required checks: 425 XCTest tests (10 skipped),
+19 Python tests passed. Native click acceptance remains separate from fixtures.
+
 Latest review repairs (2026-11-09): `5d64f0c` is signed/notarized and installed
 on the MacBook. Self-process command AX reads/actions/diagnostics use the
 existing main-thread guard; foreign AX stays on workers. A captured Escape
