@@ -1,12 +1,16 @@
 # Mac mini continuation
 
-Passive clock input repair (2026-11-11): source pending signed delivery. The
+Passive clock input repair (2026-11-11): `1457d64` is signed/notarized and
+installed on the MacBook. The
 clock label is explicitly non-focusable/non-selectable, refuses panel activation
 and background dragging, and absorbs left/right/other mouse-down events while
 preventing window ordering. No clock action or popup is introduced. Existing
 clock rendering tests exercise double-click mouse events and first-responder
 stability on every tab edge. Required checks: 425 XCTest tests (10 skipped),
-19 Python tests passed. Native click acceptance remains separate from fixtures.
+19 Python tests passed. Installed/mapped executable, ticket, Gatekeeper and
+health/doctor passed; configuration bytes match the backup. Native click
+acceptance is pending the user’s requested left/double/right-click check.
+Artifact/evidence: `/private/tmp/zonal-passive-clock/`.
 
 Latest review repairs (2026-11-09): `5d64f0c` is signed/notarized and installed
 on the MacBook. Self-process command AX reads/actions/diagnostics use the
@@ -269,3 +273,16 @@ for both architectures, but was not installed. Live clock/command visual accepta
 and transparent-corner inspection remain unverified. The clock is off by default;
 enable General → Show clock in main stack tab bar to use it. No public release,
 main push or merge occurred.
+
+
+Passive clock delivery provenance (2026-11-11): source `1457d64914fe31fad2b41cab580e7f02b75e8ab7`.
+Universal Developer ID signature and notarization `8da24ab0-ed96-4ad6-85d7-0e6fbb4596d3` accepted;
+staple, strict/deep signature and Gatekeeper verified. Installed binary hash
+matched the artifact, one process (PID 32533) mapped the installed executable,
+all four health checks and all doctor findings were OK. Active profile: UW.
+Configuration matched the pre-install backup after startup.
+Executable SHA-256: `1404115a4e600c9ae9f7fe852d7e527fc26028f47e39ee98a72b2df7bfa6c7c9`.
+ZIP SHA-256: `115d06a9fde8a5edecdd41ee852621705b865277fa83992e84d357dcc618ae09`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-passive-clock-bREpaSUT`.
+Evidence: `/private/tmp/zonal-passive-clock/evidence/`. Native clock click
+acceptance remains pending; mouse-event fixtures are deterministic evidence.
