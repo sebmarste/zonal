@@ -63,7 +63,7 @@ final class AppContainer: ObservableObject {
     private lazy var zoneTabs = ZoneTabController(
         snapshots: { [weak self] in self?.workspaceState.tabSnapshots() ?? [] },
         focus: { [weak self] id in self?.workspaceState.focusTab(assignmentID: id) },
-        performAction: { [weak self] id, action in self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
+        performAction: { [weak self] id, action in _ = self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
         configureMenu: { [weak self] id, menu in
             guard let self else { return }
             let context = self.workspaceState.currentProfileContext()
@@ -226,10 +226,14 @@ final class AppContainer: ObservableObject {
         }
         hotkeys.start()
         hotkeys.onUserKeyDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
-        windowMovementObserver.onMouseDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
+        windowMovementObserver.onMouseDown = { [weak self] in
+            self?.appCommands.cancelPreparation()
+            self?.workspaceState.cancelPendingFocus()
+        }
         appCommands.openFocusedTabMenu = { [weak self] in self?.zoneTabs.openFocusedContextMenu() ?? false }
         hotkeys.appCommands = appCommands
         appCommands.onVisibilityChanged = { [weak self] in self?.hotkeys.refreshCaptureSnapshot() }
+        appCommands.onError = { [weak self] in self?.restoreEngine.presentAppCommandFailure($0) }
         hotkeys.onEscape = { [weak self] in self?.zoneTabs.interaction.cancel() ?? false }
         windowMovementObserver.onTabPointerEvent = { [weak self] type, point in self?.zoneTabs.interaction.pointer(type, at: point) ?? false }
         windowMovementObserver.isTabInteractionActive = { [weak self] in self?.zoneTabs.interaction.isActive ?? false }

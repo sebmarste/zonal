@@ -1667,3 +1667,63 @@ private final class TabCloseAccess: AXCloseAccess, @unchecked Sendable {
         lock.withLock { element.map { CFEqual($0, candidate) } ?? false }
     }
 }
+
+
+extension ZoneTabTests {
+    func testLayoutEditDiscardsPendingManualFrameCapture() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var window = windows[0]
+        window.observedFrame = CGRect(x: 90, y: 100, width: 800, height: 600)
+        tracker.onWindowFrameChanged?(window)
+        var config = store.loadConfiguration()
+        config.profiles[0].zoneSpacing = 16
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertTrue(saved.fitsZone(in: config.profiles[0].id))
+    }
+
+    func testTabActionDeclinesUnavailableWindowsAndRecoveryWithoutSaving() throws {
+        let inventory = Inventory()
+        let (store, service, tracker, manager, _, assignments) = try fixture(inventory: inventory)
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let engine = RestoreEngine(profileManager: manager, windowRegistry: WindowRegistry(),
+            windowTracker: tracker, windowController: WindowController(frameProvider: { $0.observedFrame }),
+            workspaceState: service, store: store)
+        let bytes = try Data(contentsOf: store.workspaceURL)
+        XCTAssertFalse(engine.isTabPresentationSuspended)
+        XCTAssertNotNil(service.currentProfileContext().assignments.first { $0.id == assignments[0].id })
+        inventory.windows[0].isMinimized = true
+        tracker.reconcile()
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        inventory.windows[0].isMinimized = false
+        inventory.windows[0].isFullScreen = true
+        tracker.reconcile()
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        inventory.windows[0].isFullScreen = false
+        tracker.reconcile()
+        XCTAssertTrue(service.beginSessionRecovery())
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        XCTAssertFalse(engine.performTabAction(assignmentID: UUID(), action: .fit))
+        XCTAssertEqual(try Data(contentsOf: store.workspaceURL), bytes)
+    }
+
+    func testCosmeticProfileEditDoesNotDiscardPendingManualFrameCapture() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var window = windows[0]
+        window.observedFrame = CGRect(x: 90, y: 100, width: 800, height: 600)
+        tracker.onWindowFrameChanged?(window)
+        var config = store.loadConfiguration()
+        config.profiles[0].name = "Renamed while dragging"
+        var appearance = config.tabAppearance(for: config.profiles[0]); appearance.showsClock.toggle()
+        config.profiles[0].tabAppearance = appearance
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertFalse(saved.fitsZone(in: config.profiles[0].id))
+    }
+}

@@ -1,5 +1,20 @@
 # Mac mini continuation
 
+Review repairs (2026-11-12): all ten findings are addressed. Slow/unconfirmed
+app-menu preparation falls back within 500 ms to stable Zonal actions; outside
+clicks/unrelated keys cancel preparation. Command failures use the existing
+nonmodal HUD. Prewarming is opt-in through first use and limited to used app
+processes, with serialized discovery. Successful empty submenus are cacheable;
+cached enabled flags refresh before display, and command completion preserves
+newer opening waiters. Fit automation reports declined actions truthfully.
+Frame capture checks cheap exclusions first and compares effective layout,
+ignoring cosmetic edits while retaining layout/profile-change protection.
+Profile appearance help is corrected and overridden legacy globals no longer
+trigger reflow. The legacy serialization fields remain compatible.
+Required checks passed: 436 XCTest tests (10 skipped), 19 Python tests.
+Signed build/installation evidence follows after verification; until then the
+MacBook remains on the prior passive-clock build.
+
 Passive clock input repair (2026-11-11): `1457d64` is signed/notarized and
 installed on the MacBook. The
 clock label is explicitly non-focusable/non-selectable, refuses panel activation

@@ -180,7 +180,9 @@ extension AppContainer {
                   windowRegistry.bestMatch(for: assignment, in: context.windows) != nil else {
                 return failure("no_live_window", "No managed live window for assignment")
             }
-            restoreEngine.performTabAction(assignmentID: assignmentID, action: .fit)
+            guard restoreEngine.performTabAction(assignmentID: assignmentID, action: .fit) else {
+                return failure("window_action_declined", "Fit declined: the window is unavailable, suspended, minimized, full screen or could not be saved")
+            }
             return success("Fit accepted for assignment", state: .accepted)
         case .focusAssignment(let assignmentID):
             let model = workspaceState.refreshSwitcherSnapshot(mode: .allWindows, resetSelection: true)

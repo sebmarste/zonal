@@ -4,7 +4,7 @@ import Carbon
 
 enum MenuTimingPhase: String, Codable {
     case menuConstruction, focusHandoff, focusVerification, axDiscovery, uiPreparation, menuLayout
-    case cacheHit, cacheMiss
+    case cacheHit, cacheMiss, cachedStateValidation, zonalFallback
     case openToTracking, openToDraw, queryToResults, queryToTracking, queryToDraw, cancelledBeforeTracking
 }
 
@@ -59,6 +59,7 @@ final class AppCommandReader: @unchecked Sendable {
     let pid: pid_t
     let window: AXUIElement
     let queue = DispatchQueue(label: "Zonal app commands", qos: .userInitiated)
+    static let discoveryQueue = DispatchQueue(label: "Zonal menu discovery", qos: .utility)
     private let attribute: (AXUIElement, String) -> CFTypeRef?
     private let press: (AXUIElement) -> AXError
     private let diagnosticWindowID: (AXUIElement) -> UInt32?
@@ -155,7 +156,6 @@ final class AppCommandReader: @unchecked Sendable {
                 let key = character.isEmpty ? Self.glyph(glyph) : character.uppercased()
                 let shortcut = key.isEmpty ? "" : ((mods & 4 != 0 ? "⌃" : "") + (mods & 2 != 0 ? "⌥" : "") + (mods & 1 != 0 ? "⇧" : "") + (mods & 8 == 0 ? "⌘" : "") + key)
                 let nested = menu && recursive ? descend(child, path: next, depth: depth + 1, ancestorsEnabled: enabled) : []
-                if menu && recursive && nested.isEmpty { complete = false }
                 result.append(AppCommandNode(path: next, element: child, enabled: enabled,
                                              shortcut: shortcut, children: nested, isMenu: menu,
                                              keyEquivalent: Self.shortcutKey(character: character, glyph: glyph).key,
@@ -179,6 +179,26 @@ final class AppCommandReader: @unchecked Sendable {
             nodes[index].children = descend(nodes[index].element, path: nodes[index].path, depth: 1, ancestorsEnabled: nodes[index].enabled)
         }
         return (nodes, complete)
+    }
+    // Cache structure only: selection/document changes can alter enabled flags immediately.
+    func refreshEnabled(_ inventory: AppMenuInventory) -> AppMenuInventory? {
+        guard windowContextMatches() == true else { return .unavailable }
+        let deadline = Date().addingTimeInterval(0.25)
+        func refresh(_ nodes: [AppCommandNode], parentEnabled: Bool) -> [AppCommandNode]? {
+            var result: [AppCommandNode] = []
+            for var node in nodes {
+                guard Date() < deadline else { return nil }
+                let enabled = attribute(node.element, kAXEnabledAttribute) as? Bool
+                guard enabled != nil || node.isMenu else { return nil }
+                node.enabled = parentEnabled && (enabled ?? true)
+                guard let children = refresh(node.children, parentEnabled: node.enabled) else { return nil }
+                node.children = children
+                result.append(node)
+            }
+            return result
+        }
+        guard let nodes = refresh(inventory.nodes, parentEnabled: true) else { return nil }
+        return .init(nodes: nodes, complete: inventory.complete, isCurrent: windowContextMatches() == true)
     }
     static func shortcutModifiers(_ value: Int) -> NSEvent.ModifierFlags {
         var flags: NSEvent.ModifierFlags = []
@@ -263,6 +283,7 @@ final class AppMenuCache {
     private struct Pending {
         var id: UUID
         var context: AppMenuContext
+        var reader: AppCommandReader
         var completions: [@MainActor @Sendable (AppMenuInventory) -> Void]
     }
     private var entries: [Entry] = []
@@ -279,7 +300,7 @@ final class AppMenuCache {
         return entry.inventory
     }
     func store(_ inventory: AppMenuInventory, for context: AppMenuContext) {
-        guard inventory.complete, inventory.isCurrent, !inventory.nodes.isEmpty else { return }
+        guard inventory.complete, inventory.isCurrent else { return }
         entries.removeAll { $0.context == context }
         entries.append(.init(context: context, inventory: inventory, capturedAt: now()))
         if entries.count > 4 { entries.removeFirst(entries.count - 4) }
@@ -294,6 +315,13 @@ final class AppMenuCache {
         pending.removeAll { matches($0.context) }
         for job in cancelled { job.completions.forEach { $0(.unavailable) } }
     }
+    // Command completion invalidates state, but must not silently cancel a newer opening.
+    func refresh(_ context: AppMenuContext) {
+        entries.removeAll { $0.context == context }
+        guard let index = pending.firstIndex(where: { $0.context == context }) else { return }
+        let job = pending.remove(at: index)
+        for completion in job.completions { load(context, reader: job.reader, completion: completion) }
+    }
     // Openings join an in-flight prewarm instead of scanning the same tree twice.
     func load(_ context: AppMenuContext, reader: AppCommandReader,
               completion: @escaping @MainActor @Sendable (AppMenuInventory) -> Void) {
@@ -302,13 +330,13 @@ final class AppMenuCache {
             return
         }
         let id = UUID()
-        pending.append(.init(id: id, context: context, completions: [completion]))
-        reader.queue.async { [weak self] in
-            let inventory: AppMenuInventory
-            if reader.windowContextMatches() == true {
+        pending.append(.init(id: id, context: context, reader: reader, completions: [completion]))
+        AppCommandReader.discoveryQueue.async { [weak self] in
+            let inventory = reader.queue.sync { () -> AppMenuInventory in
+                guard reader.windowContextMatches() == true else { return .unavailable }
                 let (nodes, complete) = reader.read()
-                inventory = .init(nodes: nodes, complete: complete, isCurrent: reader.windowContextMatches() == true)
-            } else { inventory = .unavailable }
+                return .init(nodes: nodes, complete: complete, isCurrent: reader.windowContextMatches() == true)
+            }
             TabContextMenuSession.deliver {
                 guard let self, let index = self.pending.firstIndex(where: { $0.id == id }) else { return }
                 let job = self.pending.remove(at: index)
@@ -328,6 +356,7 @@ final class AppCommandExecution {
     var menuOwnedFocus = false
     weak var menuKeyWindow: NSWindow?
     var onStatus: ((String) -> Void)?
+    var onFailure: ((String) -> Void)?
     init(reader: AppCommandReader) { self.reader = reader }
     func execute(_ node: AppCommandNode) {
         let begin: @MainActor @Sendable () -> Void = { [self] in
@@ -336,12 +365,7 @@ final class AppCommandExecution {
                 let error = ready ? reader.execute(node) : "The focused window changed or focus did not settle. Reopen the window menu."
                 TabContextMenuSession.deliver { [self] in
                     onStatus?(error.map { "not-confirmed: \($0)" } ?? "confirmed")
-                    if let error {
-                        let alert = NSAlert()
-                        alert.messageText = "App Command Not Confirmed"
-                        alert.informativeText = error
-                        alert.runModal()
-                    }
+                    if let error { onFailure?(error) }
                 }
             }
         }
@@ -650,6 +674,10 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     private var reopenAfterQuery = false
     private var didNotifyClose = false
     private var preparationTimeout: Task<Void, Never>?
+    private var availabilityTimeout: Task<Void, Never>?
+    private var preparationCompletion: (@MainActor @Sendable () -> Void)?
+    private(set) var isZonalOnly = false
+    var menuAvailabilityTimeoutDuration: Duration = .milliseconds(500)
     var focusBeforeRead: (@escaping @MainActor @Sendable () -> Void) -> Void = { $0() }
     var loadInventory: ((@escaping @MainActor @Sendable (AppMenuInventory, Bool) -> Void) -> Void)?
     var cancelFocus: (() -> Void)?
@@ -716,21 +744,20 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     func prepare(_ completion: @escaping @MainActor @Sendable () -> Void) {
         guard !closed else { return }
         guard let reader else { completion(); return }
+        preparationCompletion = completion
         isPreparing = true; onPreparing?()
+        availabilityTimeout = Task { [weak self] in
+            do { try await Task.sleep(for: self?.menuAvailabilityTimeoutDuration ?? .milliseconds(500)) } catch { return }
+            self?.failPreparation("app-menu-preparation-timeout")
+        }
         preparationTimeout = Task { [weak self] in
             do { try await Task.sleep(for: self?.preparationTimeoutDuration ?? .seconds(3)) } catch { return }
             guard let self, self.isPreparing else { return }
-            reader.queue.async {
-                let context = reader.contextDiagnostic()
-                Self.deliver {
-                    guard !self.closed, self.preparationTimeout != nil else { return }
-                    self.failPreparation("focus-callback-timeout " + context)
-                }
-            }
+            self.failPreparation("focus-callback-timeout")
         }
         let focusStart = ProcessInfo.processInfo.systemUptime
         focusBeforeRead { [weak self] in
-            guard let self, !self.closed else { return }
+            guard let self, !self.closed, self.isPreparing else { return }
             self.record(.focusHandoff, since: focusStart)
             let transitionPID = self.transitionPID
             reader.queue.async { [weak self] in
@@ -739,7 +766,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                 let verificationEnd = ProcessInfo.processInfo.systemUptime
                 let context = ready ? "" : reader.contextDiagnostic()
                 Self.deliver {
-                    guard let self, !self.closed else { return }
+                    guard let self, !self.closed, self.isPreparing else { return }
                     // Focus has its own deadline. Cold menu discovery must not
                     // turn a confirmed focus into a later focus-error alert.
                     self.record(.focusVerification, since: verificationStart, until: verificationEnd)
@@ -749,17 +776,14 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
                     }
                     let discoveryStart = ProcessInfo.processInfo.systemUptime
                     let consume: @MainActor @Sendable (AppMenuInventory, Bool) -> Void = { [weak self] inventory, cached in
-                        guard let self, !self.closed else { return }
+                        guard let self, !self.closed, self.isPreparing else { return }
                         if !cached { self.record(.axDiscovery, since: discoveryStart) }
-                        guard inventory.isCurrent else { self.cancel(); self.notifyClosed(); return }
+                        guard inventory.isCurrent else { self.failPreparation("window-context-unavailable"); return }
                         let uiStart = ProcessInfo.processInfo.systemUptime
                         self.setNodes(inventory.nodes, complete: inventory.complete)
                         if let start = self.queryTrackingStart { self.record(.queryToResults, since: start) }
                         self.record(.uiPreparation, since: uiStart)
-                        self.isPreparing = false
-                        self.onQueryChanged?()
-                        guard self.canPresent() else { self.cancel(); self.notifyClosed(); return }
-                        completion()
+                        self.finishPreparation()
                     }
                     if let load = self.loadInventory { load(consume) }
                     else {
@@ -773,11 +797,26 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
             }
         }
     }
+    private func finishPreparation() {
+        isPreparing = false
+        preparationTimeout?.cancel(); preparationTimeout = nil
+        availabilityTimeout?.cancel(); availabilityTimeout = nil
+        onQueryChanged?()
+        guard canPresent() else { cancel(); notifyClosed(); return }
+        let completion = preparationCompletion
+        preparationCompletion = nil
+        completion?()
+    }
     private func failPreparation(_ context: String) {
-        cancel()
+        guard !closed, isPreparing else { return }
+        cancelFocus?()
+        isZonalOnly = true
+        unavailableReason = "App menus unavailable — reopen to try again"
+        setNodes([], complete: false)
         onInventory?(context)
-        notifyClosed()
         onPreparationFailure?()
+        record(.zonalFallback, since: openingUptime)
+        finishPreparation()
     }
     func present(at point: CGPoint, visibleFrame: CGRect) {
         guard !closed, canPresent() else { cancel(); notifyClosed(); return }
@@ -839,7 +878,7 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         if query.isEmpty {
             var app = appItems
-            if reader == nil { app = [info(unavailableReason)] }
+            if reader == nil || isZonalOnly { app = [info(unavailableReason)] }
             else if app.isEmpty { app = [info("App did not expose any menus")] }
             appendSections([.search: [searchItem], .zonal: zonalItems, .app: app])
             menu.update()
@@ -935,6 +974,8 @@ final class TabContextMenuSession: NSObject, NSMenuDelegate {
     func cancel() {
         if isPreparing { cancelFocus?() }
         preparationTimeout?.cancel(); preparationTimeout = nil
+        availabilityTimeout?.cancel(); availabilityTimeout = nil
+        preparationCompletion = nil
         closed = true; isPreparing = false; isTracking = false; reopenAfterQuery = false
         menu.cancelTracking()
     }
@@ -981,6 +1022,7 @@ final class AppCommandsController {
     private var session: TabContextMenuSession?
     let menuCache = AppMenuCache()
     private var focusedContext: AppMenuContext?
+    private var usedContexts: [AppMenuContext] = []
     private var prewarmTask: Task<Void, Never>?
     private var prewarmTimer: Timer?
     private var lifecycleObservers: [NSObjectProtocol] = []
@@ -1004,7 +1046,7 @@ final class AppCommandsController {
         }
     }
     private func startPrewarming() {
-        guard prewarmTimer == nil else { return }
+        guard !usedContexts.isEmpty, prewarmTimer == nil else { return }
         let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.prewarmFocusedWindow() }
         }
@@ -1013,7 +1055,7 @@ final class AppCommandsController {
         let center = NSWorkspace.shared.notificationCenter
         lifecycleObservers.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            MainActor.assumeIsolated { self?.menuCache.invalidate(pid: app.processIdentifier) }
+            MainActor.assumeIsolated { self?.menuCache.invalidate(pid: app.processIdentifier); self?.usedContexts.removeAll { $0.pid == app.processIdentifier } }
         })
         for name in [NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.willSleepNotification] {
             lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -1025,6 +1067,7 @@ final class AppCommandsController {
     }
     private func prewarmFocusedWindow() {
         guard !isCapturingInput, let context = focusedContext,
+              usedContexts.contains(where: { $0.pid == context.pid && $0.launchDate == context.launchDate }),
               frontmostPID() == context.pid,
               NSRunningApplication(processIdentifier: context.pid)?.launchDate == context.launchDate else { return }
         menuCache.load(context, reader: makeReader(context.pid, context.window)) { _ in }
@@ -1036,7 +1079,7 @@ final class AppCommandsController {
         let center = NSWorkspace.shared.notificationCenter
         lifecycleObservers.forEach(center.removeObserver)
         lifecycleObservers.removeAll()
-        focusedContext = nil; menuCache.invalidate()
+        focusedContext = nil; usedContexts.removeAll(); menuCache.invalidate()
     }
     private(set) var performanceSamples: [MenuTimingSample] = []
     func clearPerformanceSamples() { performanceSamples.removeAll(keepingCapacity: true) }
@@ -1063,11 +1106,15 @@ final class AppCommandsController {
     var isFiltering: Bool { session?.isPreparing == true || session?.query.isEmpty == false }
     var onVisibilityChanged: (() -> Void)?
     var openFocusedTabMenu: (() -> Bool)?
+    var onError: ((String) -> Void)?
+    func cancelPreparation() {
+        if session?.isPreparing == true { close() }
+    }
 
     func inspectActiveMenus(_ completion: @escaping @MainActor @Sendable (String) -> Void) {
         guard let active = NSWorkspace.shared.frontmostApplication else { completion("No active app"); return }
         let pid = active.processIdentifier
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        AppCommandReader.discoveryQueue.async { [weak self] in
             let app = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(app, 0.15)
             let focused = AXThreadAccess.perform(for: app) { commandAttribute(app, kAXFocusedWindowAttribute) }
@@ -1103,6 +1150,9 @@ final class AppCommandsController {
         let reader = makeReader(targetPID, expectedWindow)
         let context = AppMenuContext(pid: targetPID, window: expectedWindow,
                                      launchDate: NSRunningApplication(processIdentifier: targetPID)?.launchDate)
+        usedContexts.removeAll { $0 == context }
+        usedContexts.append(context)
+        if usedContexts.count > 4 { usedContexts.removeFirst(usedContexts.count - 4) }
         lastInventory = "Preparing focused window menus"
         let session = TabContextMenuSession(menu: menu, reader: reader, application: NSRunningApplication(processIdentifier: targetPID))
         self.session = session
@@ -1123,8 +1173,21 @@ final class AppCommandsController {
             guard let self, let session else { return }
             let start = ProcessInfo.processInfo.systemUptime
             if let inventory = self.menuCache.snapshot(for: context) {
-                session.record(.cacheHit, since: start)
-                completion(inventory, true)
+                reader.queue.async {
+                    let refreshed = reader.refreshEnabled(inventory)
+                    TabContextMenuSession.deliver { [weak self, weak session] in
+                        guard let self, let session, session.isPreparing else { return }
+                        session.record(.cachedStateValidation, since: start)
+                        if let refreshed {
+                            session.record(.cacheHit, since: start)
+                            completion(refreshed, true)
+                        } else {
+                            self.menuCache.refresh(context)
+                            session.record(.cacheMiss, since: start)
+                            self.menuCache.load(context, reader: reader) { completion($0, false) }
+                        }
+                    }
+                }
             } else {
                 session.record(.cacheMiss, since: start)
                 self.menuCache.load(context, reader: reader) { completion($0, false) }
@@ -1132,16 +1195,13 @@ final class AppCommandsController {
         }
         session.execution?.focusWindow = focusWindow
         session.execution?.onStatus = { [weak self] status in
-            self?.menuCache.invalidate(context)
+            self?.menuCache.refresh(context)
             self?.schedulePrewarm()
             self?.lastInventory += " execution=\(status)"
         }
+        session.execution?.onFailure = { [weak self] error in self?.onError?(error) }
         session.onPreparationFailure = { [weak self] in
-            self?.lastInventory += " frontmostPID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)"
-            let alert = NSAlert()
-            alert.messageText = "Window Focus Not Confirmed"
-            alert.informativeText = "Zonal could not verify focus on the clicked window. Reopen its tab menu."
-            alert.runModal()
+            self?.lastInventory += " frontmostPID=\(self?.frontmostPID() ?? 0)"
         }
         session.canPresent = { [weak self, weak session] in
             guard let self, self.session === session else { return false }
@@ -1180,13 +1240,13 @@ final class AppCommandsController {
     }
     private func currentAppIsAllowed() -> Bool {
         AppCommandFocusPolicy.allowsApp(active: frontmostPID(),
-            target: pid, opening: openingPID, preparing: session?.isPreparing == true,
+            target: pid, opening: openingPID, preparing: session?.isPreparing == true || session?.isZonalOnly == true,
             menuOwnsFocus: isVisible && session?.ownsMenuFocus == true)
     }
     private func verifyFocus() {
         guard isCapturingInput, let session, let reader = session.reader, !checkingFocus else { return }
         if !currentAppIsAllowed() { close(); return }
-        guard !session.isPreparing else { return }
+        guard !session.isPreparing, !session.isZonalOnly else { return }
         checkingFocus = true
         reader.queue.async { [weak self, weak session] in
             let matches = reader.windowContextMatches()
@@ -1203,8 +1263,8 @@ final class AppCommandsController {
         if CFEqual(window, reader.window) { return }
         var windowPID: pid_t = 0
         AXUIElementGetPid(window, &windowPID)
-        if session?.isPreparing == true {
-            if windowPID == pid { return }
+        if session?.isPreparing == true || session?.isZonalOnly == true {
+            if session?.isPreparing == true, windowPID == pid { return }
             if let openingWindow, CFEqual(window, openingWindow) { return }
         }
         if isVisible, session?.ownsMenuFocus == true, windowPID == ProcessInfo.processInfo.processIdentifier { return }

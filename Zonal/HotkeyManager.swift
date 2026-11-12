@@ -215,6 +215,7 @@ final class HotkeyManager {
                 MainActor.assumeIsolated {
                     guard let self, self.inputGeneration == generation else { return }
                     if type == .keyDown && !captured {
+                        self.appCommands?.cancelPreparation()
                         self.onUserKeyDown?()
                         if event.getIntegerValueField(.keyboardEventKeycode) == 53 { _ = self.onEscape?() }
                     } else { _ = self.handleEvent(type: type, event: event) }

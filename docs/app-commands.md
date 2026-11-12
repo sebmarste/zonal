@@ -23,8 +23,11 @@ request keyboard or panel focus and prevent mouse-driven window ordering.
 Zonal actions always retain the clicked assignment. Right-click explicitly
 focuses the exact clicked window before reading its application menus, including
 background windows. It uses the existing native focus executor once and verifies
-the app and AX window before discovery. A three-second preparation timeout covers
-cancelled native focus callbacks; failed verification cannot present commands.
+the app and AX window before discovery. Preparation has a 500 ms availability
+budget: failed focus or slow/unavailable discovery presents the same menu with
+Zonal actions and an app-menu availability message. Late inventories cannot
+replace that displayed snapshot. Escape, an outside click or an unrelated key
+cancels pending focus/preparation; search typeahead is buffered within the budget.
 The initial source app/window is captured only to tolerate the expected opening
 transition. Unrelated app/window changes cancel preparation.
 
@@ -34,8 +37,9 @@ enabled state. Reads use a 150 ms message timeout, bounded depth/node counts and
 a 1.5 second scan budget. The fresh inventory is assembled before presentation;
 root categories and submenus remain a frozen snapshot until dismissal. This
 prevents delayed AX reads from resizing or scrolling an open menu. The Apple
-menu is excluded. Empty AX submenus are unavailable; Zonal does not press a
-command to force population, and there is no dynamic-items hint.
+menu is excluded. Successfully read empty submenus are complete and cacheable;
+unreadable children and exhausted scan limits remain incomplete. Zonal does not
+press a command to force population, and there is no dynamic-items hint.
 
 Search stays inside the same native menu in a scrollable result area with explicit
 selection. Its height fits the result count, with scrolling capped at 420 points
@@ -75,6 +79,15 @@ execution can return focus from Zonal's own menu to the captured window, then
 performs a bounded read-only readiness wait. It immediately rejects another app
 or sibling window and still requires strict focus before its one AXPress.
 Diagnostics record confirmed/unconfirmed execution, including the failure reason.
+Execution failures use the existing nonmodal notification rather than an app-wide
+modal alert.
+
+Prewarming starts only after the user first opens app commands, and only for
+previously used application processes. Discovery is serialized across readers.
+Cached trees refresh enabled flags before presentation without enumerating their
+structure again; unknown flags fall back to discovery. Execution still performs
+all identity/enabled checks before one press. Completion of an older command
+refreshes its cache without cancelling the callbacks of a newer menu opening.
 
 `Zonal --automation app-menus` reads a bounded inventory of the currently active
 app, reporting category names and counts without executing commands. Diagnostics

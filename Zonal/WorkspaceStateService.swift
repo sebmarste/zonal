@@ -1340,22 +1340,22 @@ final class WorkspaceStateService {
     private func scheduleCustomFrameCapture(for window: ManagedWindow) {
         pendingFrameUpdates[window.id]?.cancel()
         let policy = CustomFrameCapturePolicy()
-        let captureProfile = profileManager.matchedProfile(for: profileManager.currentSnapshot())
-        guard captureProfile != nil, policy.shouldCapture(
+        guard policy.shouldCapture(
             isSessionRecoveryActive: sessionRecovery.isActive,
             isApplyingPlacement: windowController.isApplyingPlacement(to: window),
             hasActiveUserInteraction: windowController.hasActiveUserInteraction,
             isFullScreen: windowController.isFullScreen(window),
             isMinimized: windowController.isMinimized(window),
             isDisplayTransitionActive: isDisplayTransitionActive
-        ) else {
+        ), let captureProfile = profileManager.matchedProfile(for: profileManager.currentSnapshot()) else {
             return
         }
+        let runtimePolicy = ConfigurationRuntimePolicy()
+        let captureLayout = runtimePolicy.runtimeProfile(captureProfile, configuration: store.loadConfiguration())
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             defer { self.pendingFrameUpdates.removeValue(forKey: window.id) }
-            guard self.profileManager.matchedProfile(for: self.profileManager.currentSnapshot()) == captureProfile,
-                  policy.shouldCapture(
+            guard policy.shouldCapture(
                       isSessionRecoveryActive: self.sessionRecovery.isActive,
                       isApplyingPlacement: self.windowController.isApplyingPlacement(to: window),
                       hasActiveUserInteraction: self.windowController.hasActiveUserInteraction,
@@ -1363,6 +1363,8 @@ final class WorkspaceStateService {
                       isMinimized: self.windowController.isMinimized(window),
                       isDisplayTransitionActive: self.isDisplayTransitionActive
                   ),
+                  let currentProfile = self.profileManager.matchedProfile(for: self.profileManager.currentSnapshot()),
+                  runtimePolicy.runtimeProfile(currentProfile, configuration: self.store.loadConfiguration()) == captureLayout,
                   let frame = self.windowController.frame(of: window) else { return }
             self.recordCustomFrame(for: window, frame: frame)
         }

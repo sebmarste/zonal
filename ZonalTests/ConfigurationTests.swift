@@ -56,7 +56,8 @@ final class ConfigurationTests: XCTestCase {
     func testOverlappingTabModesRoundTripAndDefaultWhenAbsent() throws {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
-        let defaults = ZonalConfiguration.default
+        var defaults = ZonalConfiguration.default
+        for index in defaults.profiles.indices { defaults.profiles[index].tabAppearance = nil }
         let data = try encoder.encode(defaults)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertNil(json["overlappingZoneTabs"])
@@ -66,7 +67,8 @@ final class ConfigurationTests: XCTestCase {
             var configuration = defaults
             configuration.overlappingZoneTabs = mode
             XCTAssertEqual(try decoder.decode(ZonalConfiguration.self, from: encoder.encode(configuration)), configuration)
-            XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: defaults, current: configuration))
+            XCTAssertEqual(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: defaults, current: configuration),
+                           mode != .zoneShortcuts)
         }
         var invalid = json
         invalid["overlappingZoneTabs"] = "unknown"
@@ -721,6 +723,8 @@ private final class CommandMenuFixture {
     var focusedPIDs: [pid_t] = []
     var enabled = true
     var omitCategoryEnabled = false
+    var emptyMenu = false
+    var unreadableMenu = false
     var menuReadDelay: TimeInterval = 0
     var replacement: AXUIElement?
     var presses: [AXUIElement] = []
@@ -730,7 +734,8 @@ private final class CommandMenuFixture {
     var onMenuRead: (() -> Void)?
     lazy var reader = makeReader()
     func makeReader() -> AppCommandReader {
-        AppCommandReader(pid: pid, window: window, attribute: { [unowned self] element, name in
+        AppCommandReader(pid: pid, window: window, attribute: { [weak self] element, name in
+        guard let self else { return nil }
         self.onAttribute?()
         if name == kAXFocusedApplicationAttribute {
             let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
@@ -741,7 +746,10 @@ private final class CommandMenuFixture {
         if name == kAXChildrenAttribute {
             if CFEqual(element, self.bar) { return [self.file] as CFArray }
             if CFEqual(element, self.file) { return [self.menu] as CFArray }
-            if CFEqual(element, self.menu) { return [self.first, self.replacement ?? self.second] as CFArray }
+            if CFEqual(element, self.menu) {
+                if self.unreadableMenu { return nil }
+                return (self.emptyMenu ? [] : [self.first, self.replacement ?? self.second]) as CFArray
+            }
             return [] as CFArray
         }
         if name == kAXRoleAttribute { return (CFEqual(element, self.menu) ? kAXMenuRole : kAXMenuItemRole) as CFString }
@@ -1206,13 +1214,16 @@ extension ConfigurationTests {
     }
 
     @MainActor
-    func testUnconfirmedFocusNeverOpensMenuOrExecutesCommand() async {
+    func testUnconfirmedFocusShowsZonalFallbackWithoutExecutingAppCommand() async {
         let fixture = CommandMenuFixture()
         fixture.current = false
         let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
         let failed = expectation(description: "Focus failure reported")
         session.onPreparationFailure = { failed.fulfill() }
-        session.prepare { XCTFail("Unverified context presented") }
+        session.prepare {
+            XCTAssertTrue(session.isZonalOnly)
+            XCTAssertTrue(session.menu.items.allSatisfy { $0.submenu == nil })
+        }
         await fulfillment(of: [failed], timeout: 3)
         XCTAssertFalse(session.isPreparing)
         XCTAssertTrue(fixture.presses.isEmpty)
@@ -1228,7 +1239,10 @@ extension ConfigurationTests {
         session.cancelFocus = { cancellations += 1 }
         let failed = expectation(description: "Unfinished focus times out")
         session.onPreparationFailure = { failed.fulfill() }
-        session.prepare { XCTFail("Unverified context presented") }
+        session.prepare {
+            XCTAssertTrue(session.isZonalOnly)
+            XCTAssertTrue(session.menu.items.allSatisfy { $0.submenu == nil })
+        }
         await fulfillment(of: [failed], timeout: 3)
         XCTAssertEqual(cancellations, 1)
         XCTAssertFalse(session.isPreparing)
@@ -1500,6 +1514,7 @@ extension ConfigurationTests {
         let menu = NSMenu()
         controller.configure(menu, expectedWindow: fixture.window)
         let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        session.menuAvailabilityTimeoutDuration = .seconds(3)
         // The test's fake target is not a real frontmost process.
         session.canPresent = { true }
         let prepared = expectation(description: "Background focus validation and discovery")
@@ -1546,11 +1561,13 @@ extension ConfigurationTests {
 
         let changed = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
         let cancelled = expectation(description: "Window changed during discovery")
-        changed.onInventory = { _ in XCTFail("Stale inventory was installed") }
-        changed.onClose = { cancelled.fulfill() }
+        changed.onPreparationFailure = { cancelled.fulfill() }
         // Use the attribute hook at the menu-bar read, after readiness succeeded.
         fixture.onMenuRead = { fixture.windowCurrent = false }
-        changed.prepare { XCTFail("Stale menu presented") }
+        changed.prepare {
+            XCTAssertTrue(changed.isZonalOnly)
+            XCTAssertTrue(changed.menu.items.allSatisfy { $0.submenu == nil })
+        }
         await fulfillment(of: [cancelled], timeout: 3)
         XCTAssertTrue(fixture.presses.isEmpty)
     }
@@ -1713,6 +1730,11 @@ extension ConfigurationTests {
         let controller = AppCommandsController(makeReader: { _, _ in fixture.makeReader() }, frontmostPID: { 910002 })
         defer { controller.stop() }
         controller.focusedWindowChanged(fixture.window)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(scans, 0, "Unused app menus must not start background discovery")
+        controller.configure(NSMenu(), expectedWindow: fixture.window)
+        controller.close()
+        controller.focusedWindowChanged(fixture.window)
         await fulfillment(of: [scanStarted], timeout: 2)
         let menu = NSMenu()
         controller.configure(menu, expectedWindow: fixture.window)
@@ -1852,5 +1874,164 @@ extension ConfigurationTests {
         await fulfillment(of: [done], timeout: 3)
         XCTAssertEqual(presses, 1)
         XCTAssertEqual(diagnosticReads, 2)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testEmptySubmenusAreCompleteAndCacheableButUnreadableChildrenAreNot() {
+        let fixture = CommandMenuFixture()
+        fixture.emptyMenu = true
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let (nodes, complete) = fixture.reader.read()
+        XCTAssertTrue(complete)
+        XCTAssertEqual(nodes.count, 1)
+        XCTAssertTrue(nodes[0].isMenu)
+        XCTAssertTrue(nodes[0].children.isEmpty)
+        cache.store(.init(nodes: nodes, complete: complete, isCurrent: true), for: key)
+        XCTAssertNotNil(cache.snapshot(for: key))
+        fixture.unreadableMenu = true
+        XCTAssertFalse(fixture.reader.read().1)
+        cache.invalidate()
+        cache.store(.init(nodes: [], complete: true, isCurrent: true), for: key)
+        XCTAssertNotNil(cache.snapshot(for: key), "A verified empty menu bar is a valid negative cache entry")
+    }
+
+    func testCachedEnabledStateRefreshesWithoutRediscoveringTree() throws {
+        let fixture = CommandMenuFixture()
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        fixture.onMenuRead = { XCTFail("Enabled refresh must not enumerate the menu bar") }
+        fixture.enabled = false
+        let disabled = try XCTUnwrap(fixture.reader.refreshEnabled(inventory))
+        XCTAssertTrue(disabled.nodes.flatMap { [$0] + $0.descendants }.allSatisfy { !$0.enabled })
+        fixture.enabled = true
+        let enabled = try XCTUnwrap(fixture.reader.refreshEnabled(disabled))
+        XCTAssertTrue(enabled.nodes.flatMap { [$0] + $0.descendants }.allSatisfy(\.enabled))
+        XCTAssertTrue(fixture.presses.isEmpty)
+        fixture.windowCurrent = false
+        XCTAssertFalse(try XCTUnwrap(fixture.reader.refreshEnabled(inventory)).isCurrent)
+    }
+
+    @MainActor
+    func testCommandRefreshPreservesNewOpeningWaiterAndDropsSupersededScan() async {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let started = expectation(description: "Old scan started")
+        let release = DispatchSemaphore(value: 0)
+        var scans = 0
+        fixture.onMenuRead = {
+            scans += 1
+            if scans == 1 { started.fulfill(); _ = release.wait(timeout: .now() + 2) }
+        }
+        let ready = expectation(description: "New opening receives refreshed inventory")
+        var deliveries = 0
+        cache.load(key, reader: fixture.reader) { inventory in
+            deliveries += 1
+            XCTAssertTrue(inventory.isCurrent)
+            XCTAssertTrue(inventory.complete)
+            ready.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        cache.refresh(key)
+        XCTAssertEqual(deliveries, 0, "Command invalidation must not fail a newer opening")
+        release.signal()
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertEqual(deliveries, 1)
+        XCTAssertEqual(scans, 2)
+        XCTAssertNotNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testDiscoveryIsSerializedAcrossReaders() async {
+        let first = CommandMenuFixture(), second = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: first.pid, window: first.window, launchDate: nil)
+        var other = key; other.launchDate = Date(timeIntervalSince1970: 7)
+        let started = expectation(description: "First scan started")
+        let release = DispatchSemaphore(value: 0)
+        let secondStarted = DispatchSemaphore(value: 0)
+        first.onMenuRead = { started.fulfill(); _ = release.wait(timeout: .now() + 2) }
+        second.onMenuRead = { secondStarted.signal() }
+        let done = expectation(description: "Both scans completed"); done.expectedFulfillmentCount = 2
+        cache.load(key, reader: first.reader) { _ in done.fulfill() }
+        await fulfillment(of: [started], timeout: 2)
+        cache.load(other, reader: second.reader) { _ in done.fulfill() }
+        XCTAssertEqual(secondStarted.wait(timeout: .now() + 0.05), .timedOut)
+        release.signal()
+        await fulfillment(of: [done], timeout: 3)
+        XCTAssertEqual(secondStarted.wait(timeout: .now()), .success)
+    }
+
+    @MainActor
+    func testSlowMenusFallBackToUsableZonalActionsAndIgnoreLateInventory() async {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        var closes = 0
+        menu.addItem(ZoneTabMenuItem(title: "Close Window") { closes += 1 })
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.menuAvailabilityTimeoutDuration = .milliseconds(25)
+        var late: (@MainActor @Sendable (AppMenuInventory, Bool) -> Void)?
+        session.loadInventory = { late = $0 }
+        let shown = expectation(description: "Zonal menu available without app inventory")
+        session.prepare { shown.fulfill() }
+        await fulfillment(of: [shown], timeout: 2)
+        XCTAssertTrue(session.isZonalOnly)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertEqual(menu.items.filter { $0.action != nil }.map(\.title), ["Close Window"])
+        late?(.init(nodes: fixture.reader.read().0, complete: true, isCurrent: true), false)
+        XCTAssertTrue(menu.items.allSatisfy { $0.submenu == nil })
+        session.setQuery("close")
+        session.input(key: 36, text: nil, flags: [])
+        await Task.yield()
+        XCTAssertEqual(closes, 1)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testUserCancellationImmediatelyStopsCapturingPreparation() throws {
+        let fixture = CommandMenuFixture()
+        let controller = AppCommandsController(makeReader: { _, _ in fixture.reader }, frontmostPID: { 910002 })
+        defer { controller.stop() }
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        session.focusBeforeRead = { _ in }
+        session.prepare { XCTFail("Cancelled menu must not present") }
+        XCTAssertTrue(controller.isCapturingInput)
+        controller.cancelPreparation()
+        XCTAssertFalse(controller.isCapturingInput)
+        XCTAssertFalse(session.isPreparing)
+    }
+
+    @MainActor
+    func testCommandFailureReportsNonmodalCallbackExactlyOnce() async throws {
+        let fixture = CommandMenuFixture()
+        let command = try XCTUnwrap(fixture.reader.read().0.first?.children.first)
+        fixture.outcome = .cannotComplete
+        let execution = AppCommandExecution(reader: fixture.reader)
+        let reported = expectation(description: "Error reported without a modal loop")
+        execution.onFailure = { message in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(message.contains("did not confirm"))
+            reported.fulfill()
+        }
+        execution.execute(command)
+        await fulfillment(of: [reported], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
+
+    func testUnusedLegacyTabGlobalsDoNotReconcileOverriddenProfiles() {
+        var before = ZonalConfiguration.default
+        for i in before.profiles.indices { before.profiles[i].tabAppearance = before.tabAppearance(for: before.profiles[i]) }
+        var after = before
+        after.tabEdge = before.tabEdge == .top ? .bottom : .top
+        after.tabShowsNames.toggle()
+        after.overlappingZoneTabs = .allWindows
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
+        after.profiles[0].tabAppearance = nil
+        XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
     }
 }
