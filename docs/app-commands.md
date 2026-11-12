@@ -665,3 +665,46 @@ ZIP SHA-256: `1a077a9b81eb903c57405aaa5110959f3da8f79ac01c537505d82e8ed93e680d`.
 Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-self-ax-escape-X2chisNR`.
 Artifact/provenance/evidence: `/private/tmp/zonal-self-ax-escape/`, including
 `evidence/live-self-check.json` and post-check health/configuration verification.
+
+
+## Ten review repairs, 2026-11-12
+
+Source `db51e881bdf3f02ac3f5cbbb2edd74c6062bd326` fixes all ten review
+findings: bounded Zonal-only fallback; opt-in, serialized prewarming; cacheable
+successful empty submenus; preserved newer-load waiters after command completion;
+nonmodal errors; refreshed cached enabled states; prompt cancellation and a
+bounded preparation capture; truthful fit-acceptance responses; cheap frame
+capture exclusions with cosmetic-safe layout comparison; and current profile
+appearance help without redundant global-override reflows. Layout edits still
+invalidate a pending frame capture. Legacy serialized fallback fields remain.
+
+`./scripts/check` passed 436 XCTest tests (10 skipped) and 19 Python tests.
+New deterministic fixtures cover empty versus unreadable submenus, enabled-state
+refresh without discovery, refresh/load races, cross-reader serialization,
+late-inventory rejection after fallback with working Zonal actions, preparation
+cancellation, exactly-once nonmodal execution failure, overridden legacy globals,
+declined minimized/full-screen/recovery actions, and cosmetic versus layout edits
+while a manual frame capture is pending. They require no live AX permission.
+
+The universal Release archive uses Developer ID team `XW6G452649`, hardened
+runtime and secure timestamp. Notarization submission
+`6f1fb3ac-9eba-4b5d-bf49-722e9c447be6` was accepted; stapling, strict/deep
+signature and Gatekeeper checks passed before staging and on the installed app.
+Artifact and evidence: `/private/tmp/zonal-ten-review-fixes/`.
+
+- ZIP SHA-256: `247e863eab21cadb7e1d8465ff64dee6e211971fac8ec0b115dccf51760497e9`.
+- Binary SHA-256: `c6d51ef96da91538a67c39fed218bab2436c4936336c45285c38eef0966479bf`.
+- Exact verified stage: `/Users/sebmarste/.local/share/macbook-deploy/staging/upload.Aj9GLtFK/artifact`.
+- Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-ten-review-fixes-HVBXIhxB`.
+
+The MacBook gracefully quit and relaunched the installed app. Exactly one process
+(PID 24162 at verification) maps `/Applications/Zonal.app/Contents/MacOS/Zonal`,
+whose hash matches the artifact. Accessibility, Input Monitoring, keyboard capture
+and tracking were all true; every doctor finding was OK, UW was active, and the
+configuration matched its backup byte for byte after startup. A read-only real
+Ardia inventory reported the same exact focused AX window and ten complete
+categories in 126.1 ms. No app command was executed during this verification.
+
+This establishes signed artifact, installation and live AX inventory evidence.
+The new fallback/error UI and perceived opening latency still require hands-on
+acceptance; fixtures and read-only inventory are not physical menu acceptance.

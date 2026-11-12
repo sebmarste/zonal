@@ -12,8 +12,14 @@ ignoring cosmetic edits while retaining layout/profile-change protection.
 Profile appearance help is corrected and overridden legacy globals no longer
 trigger reflow. The legacy serialization fields remain compatible.
 Required checks passed: 436 XCTest tests (10 skipped), 19 Python tests.
-Signed build/installation evidence follows after verification; until then the
-MacBook remains on the prior passive-clock build.
+Source `db51e88` is signed/notarized and installed on the MacBook. Universal
+architectures, strict signature, ticket, Gatekeeper, exact installed/mapped
+executable (PID 24162), all four runtime health flags and doctor passed. UW is
+active and configuration bytes match the rollback backup. A real Ardia read
+returned ten complete categories in 126.1 ms. New native fallback/error paths
+have deterministic fixture coverage; hands-on menu acceptance and timing of this
+build remain unverified. Evidence: `/private/tmp/zonal-ten-review-fixes/`.
+Rollback: `/Users/sebmarste/.local/share/macbook-deploy/rollback/zonal-ten-review-fixes-HVBXIhxB`.
 
 Passive clock input repair (2026-11-11): `1457d64` is signed/notarized and
 installed on the MacBook. The
