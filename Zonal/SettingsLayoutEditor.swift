@@ -14,24 +14,6 @@ struct ProfileLayoutEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Zone spacing")
-                Slider(value: $profile.zoneSpacing, in: DisplayProfile.zoneSpacingRange, step: 1,
-                       onEditingChanged: { editing in if !editing { commit() } })
-                    .accessibilityLabel("Zone spacing")
-                TextField("Points", value: Binding(get: { profile.zoneSpacing }, set: { value in
-                    guard value.isFinite else { return }
-                    profile.zoneSpacing = min(DisplayProfile.zoneSpacingRange.upperBound, max(0, value.rounded()))
-                    commit()
-                }), format: .number)
-                    .frame(width: 44)
-                Text("pt").foregroundStyle(.secondary)
-            }
-            .padding(14)
-            Text("Space between zones and around the display. Applies to this profile.")
-                .font(.caption).foregroundStyle(.secondary)
-                .padding(.horizontal, 14).padding(.bottom, 12)
-            Divider()
             if !profile.displayRoles.isEmpty {
                 ProfileDisplayOverview(
                     profile: $profile,

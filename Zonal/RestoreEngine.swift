@@ -765,18 +765,19 @@ final class RestoreEngine {
         }
     }
 
-    func performTabAction(assignmentID: UUID, action: ZoneTabAction) {
+    @discardableResult
+    func performTabAction(assignmentID: UUID, action: ZoneTabAction) -> Bool {
         let context = workspaceState.currentProfileContext()
-        guard !isTabPresentationSuspended,
+        guard !isTabPresentationSuspended, !workspaceState.isSessionRecoveryActive,
               let assignment = context.assignments.first(where: { $0.id == assignmentID }),
               assignment.managementMode == .managed,
               let window = windowRegistry.bestMatch(for: assignment, in: context.windows),
               !windowController.isFullScreen(window), !windowController.isMinimized(window),
-              let frame = windowController.frame(of: window) else { return }
+              let frame = windowController.frame(of: window) else { return false }
         let change: ManualWindowChange?
         switch action {
         case .move(let zoneID):
-            guard zoneID != assignment.zoneID else { return }
+            guard zoneID != assignment.zoneID else { return false }
             change = workspaceState.tabMoveChange(for: assignment, currentFrame: frame, to: zoneID, context: context)
         case .fit:
             change = .fit(assignment.zoneID)
@@ -788,10 +789,10 @@ final class RestoreEngine {
                 self?.hud.show(WindowActionNotification(title: "Could Not Close Window",
                     detail: "The app did not accept the close request", symbolName: "xmark.rectangle", tone: .warning), onAction: nil)
             }
-            return
+            return true
         }
-        guard let change else { return }
-        performManualAction(window: window, change: change, bringToFrontAfterMove: true)
+        guard let change else { return false }
+        return performManualAction(window: window, change: change, bringToFrontAfterMove: true)
     }
 
     func updateWindowAssignment(_ assignmentID: UUID, zoneID: ZoneID, fitToZone: Bool) {
@@ -804,14 +805,15 @@ final class RestoreEngine {
         }
     }
 
+    @discardableResult
     func performManualAction(
         window: ManagedWindow, change: ManualWindowChange, before: WindowActionSnapshot? = nil,
         bringToFrontAfterMove: Bool = false,
         completion: ((WindowPlacementOutcome) -> Void)? = nil
-    ) {
+    ) -> Bool {
         guard let before = before ?? windowController.frame(of: window).map({
             workspaceState.actionSnapshot(for: window, frame: $0)
-        }) else { completion?(.constrained); return }
+        }) else { completion?(.constrained); return false }
         if case .custom = change { prepareManualUndo(snapshot: before, name: change.name) }
         let previousZone = workspaceState.zone(for: window)
         let saveResult: WorkspaceSaveResult
@@ -844,7 +846,7 @@ final class RestoreEngine {
                     actionTitle: "Configure"), onAction: { AppContainer.shared.openSettings() })
             }
             completion?(.notSaved)
-            return
+            return false
         }
         if case .custom = change {} else { prepareManualUndo(snapshot: before, name: change.name) }
         switch change {
@@ -855,7 +857,7 @@ final class RestoreEngine {
                   let target = workspaceState.targetFrame(for: assignment, profile: context.profile,
                       snapshot: context.snapshot, stackAssignments: context.windows.compactMap {
                           workspaceState.assignment(for: $0, context: context)
-                      }) else { completion?(.constrained); return }
+                      }) else { completion?(.constrained); return false }
             let requestedFrame: CGRect
             if case .move(_, let frame) = change { requestedFrame = frame } else { requestedFrame = target.frame }
             windowController.move(window, to: requestedFrame, in: target.container, reason: .assignment) { [weak self] outcome in
@@ -882,6 +884,7 @@ final class RestoreEngine {
             scheduleZoneReflow(previousZone)
             scheduleZoneReflow(workspaceState.zone(for: window))
         }
+        return true
     }
 
     func detailedDiagnosticLines() -> [String] {
@@ -975,6 +978,11 @@ final class RestoreEngine {
             ),
             onAction: failed == 0 ? nil : { [weak self] in self?.undoLastAction() }
         )
+    }
+
+    func presentAppCommandFailure(_ detail: String) {
+        hud.show(WindowActionNotification(title: "App Command Not Confirmed", detail: detail,
+            symbolName: "exclamationmark.triangle", tone: .warning), onAction: nil)
     }
 
     func presentPlacementFeedback(

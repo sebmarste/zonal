@@ -18,17 +18,23 @@ enum ShortcutRecordingSession {
 struct HotkeyCaptureSnapshot {
     var bindings: [HotkeyBinding] = []
     var useNativeCommandTab = false
+    var appCommandsFiltering = false
+    var appCommandsActive = false
     var switcherActive = false
     private var releaseModifier: CGEventFlags?
     private var releasePending = false
 
-    init(bindings: [HotkeyBinding] = [], useNativeCommandTab: Bool = false, switcherActive: Bool = false) {
+    init(bindings: [HotkeyBinding] = [], useNativeCommandTab: Bool = false, switcherActive: Bool = false, appCommandsActive: Bool = false, appCommandsFiltering: Bool = false) {
+        self.appCommandsFiltering = appCommandsFiltering
+        self.appCommandsActive = appCommandsActive
         self.bindings = bindings
         self.useNativeCommandTab = useNativeCommandTab
         self.switcherActive = switcherActive
     }
 
     mutating func update(_ next: HotkeyCaptureSnapshot) {
+        appCommandsFiltering = next.appCommandsFiltering
+        appCommandsActive = next.appCommandsActive
         bindings = next.bindings
         useNativeCommandTab = next.useNativeCommandTab
         if !next.switcherActive { releasePending = false }
@@ -47,6 +53,17 @@ struct HotkeyCaptureSnapshot {
         guard !ShortcutRecordingSession.isActive else { switcherActive = false; return false }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         let flags = event.flags
+        if appCommandsActive {
+            if appCommandsFiltering && [36, 76, 53, 125, 126].contains(code) { return true }
+            if [51, 117].contains(code) { return true }
+            if flags.contains(.maskCommand) { return code == 9 }
+            if flags.contains(.maskControl) { return false }
+            var length = 0
+            var characters = [UniChar](repeating: 0, count: 8)
+            event.keyboardGetUnicodeString(maxStringLength: characters.count, actualStringLength: &length,
+                                           unicodeString: &characters)
+            return SwitcherTextInputPolicy().acceptedText(String(utf16CodeUnits: characters, count: length)) != nil
+        }
         if switcherActive {
             if [48, 53, 36, 76, 51, 117, 123, 124, 125, 126].contains(code) { return true }
             var length = 0
@@ -159,6 +176,7 @@ final class HotkeyManager {
     private let store: PersistenceStore
     private let workspaceState: WorkspaceStateService
     private let switcher: SwitcherController
+    var appCommands: AppCommandsController?
     var onUserKeyDown: (() -> Void)?
     var onEscape: (() -> Bool)?
     private var inputTap: KeyboardInputTap?
@@ -193,15 +211,17 @@ final class HotkeyManager {
         let generation = UUID()
         inputGeneration = generation
         let input = KeyboardInputTap { [weak self] type, event, captured in
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.inputGeneration == generation else { return }
-                if type == .keyDown && !captured {
-                    self.onUserKeyDown?()
-                    if event.getIntegerValueField(.keyboardEventKeycode) == 53 { _ = self.onEscape?() }
-                } else {
-                    _ = self.handleEvent(type: type, event: event)
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.inputGeneration == generation else { return }
+                    if type == .keyDown && !captured {
+                        self.appCommands?.cancelPreparation()
+                        self.onUserKeyDown?()
+                        if event.getIntegerValueField(.keyboardEventKeycode) == 53 { _ = self.onEscape?() }
+                    } else { _ = self.handleEvent(type: type, event: event) }
                 }
             }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
         }
         inputTap = input
         refreshCaptureSnapshot()
@@ -212,7 +232,7 @@ final class HotkeyManager {
         let configuration = store.loadConfiguration()
         inputTap?.update(HotkeyCaptureSnapshot(bindings: configuration.hotkeys,
             useNativeCommandTab: configuration.useNativeCommandTab || workspaceState.shouldUseNativeSwitcherInFullScreen(),
-            switcherActive: switcher.isVisible))
+            switcherActive: switcher.isVisible, appCommandsActive: appCommands?.isCapturingInput ?? false, appCommandsFiltering: appCommands?.isFiltering ?? false))
     }
 
     func stop() {
@@ -239,7 +259,11 @@ final class HotkeyManager {
             restoreEngine.focusNextWindowInStack(direction: 1)
         case .previousWindowInStack:
             restoreEngine.focusNextWindowInStack(direction: -1)
+        case .openAppCommands:
+            switcher.cancel()
+            appCommands?.show()
         case .openGlobalSwitcher:
+            appCommands?.close()
             switcher.show(mode: .allWindows, reverse: pendingSwitcherReverse)
             pendingSwitcherReverse = false
         case .openZoneSwitcher:
@@ -300,6 +324,11 @@ final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
 
+        if let appCommands, appCommands.isCapturingInput {
+            appCommands.input(key: event.getIntegerValueField(.keyboardEventKeycode),
+                              text: NSEvent(cgEvent: event)?.characters, flags: event.flags, inputUptime: Double(event.timestamp) / 1_000_000_000)
+            return nil
+        }
         if event.getIntegerValueField(.keyboardEventKeycode) == 53, onEscape?() == true { return nil }
         guard let command = command(for: event) else {
             onUserKeyDown?()

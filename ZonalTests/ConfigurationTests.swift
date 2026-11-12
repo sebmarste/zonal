@@ -5,10 +5,59 @@ import XCTest
 @testable import Zonal
 
 final class ConfigurationTests: XCTestCase {
+    func testAppCommandSearchUsesEveryTokenAndFullPath() {
+        let command = AppCommandPath(indices: [2, 3], titles: ["File", "Export PDF…"])
+        XCTAssertEqual(command.display, "File › Export PDF…")
+        XCTAssertTrue(command.matches("pdf FILE"))
+        XCTAssertFalse(command.matches("pdf edit"))
+        XCTAssertNotEqual(command, AppCommandPath(indices: [2, 4], titles: command.titles))
+        XCTAssertNotEqual(command, AppCommandPath(indices: command.indices, titles: ["File", "Delete"]))
+    }
+
+    func testAppCommandsShortcutRoundTripsWithoutZones() throws {
+        let command = HotkeyCommand.openAppCommands
+        XCTAssertEqual(try JSONDecoder().decode(HotkeyCommand.self, from: JSONEncoder().encode(command)), command)
+        XCTAssertEqual(HotkeyCommandKind(command: command).command(zoneID: .center), command)
+    }
+
+    func testNativeAppMenuCapturesSearchButLeavesNavigationWithAppKit() throws {
+        var snapshot = HotkeyCaptureSnapshot(appCommandsActive: true)
+        for code in [53, 36, 123, 124, 125, 126] {
+            let event = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true))
+            XCTAssertFalse(snapshot.captures(event))
+        }
+        let typing = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        let letters: [UniChar] = [97]
+        typing.keyboardSetUnicodeString(stringLength: 1, unicodeString: letters)
+        XCTAssertTrue(snapshot.captures(typing))
+        snapshot.update(HotkeyCaptureSnapshot(appCommandsActive: true, appCommandsFiltering: true))
+        let enter = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true))
+        XCTAssertTrue(snapshot.captures(enter))
+        for code in [125, 126] {
+            let arrow = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true))
+            XCTAssertTrue(snapshot.captures(arrow))
+        }
+        snapshot.update(HotkeyCaptureSnapshot())
+        XCTAssertFalse(snapshot.captures(typing))
+    }
+
+    func testMainStackClockDefaultsOffAndPersists() throws {
+        var configuration = ZonalConfiguration.default
+        let data = try JSONEncoder().encode(configuration.behavior)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "showMainStackClock")
+        XCTAssertFalse(try JSONDecoder().decode(WindowBehaviorSettings.self,
+            from: JSONSerialization.data(withJSONObject: json)).showMainStackClock)
+        configuration.behavior.showMainStackClock = true
+        XCTAssertEqual(try JSONDecoder().decode(ZonalConfiguration.self,
+            from: JSONEncoder().encode(configuration)), configuration)
+    }
+
     func testOverlappingTabModesRoundTripAndDefaultWhenAbsent() throws {
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
-        let defaults = ZonalConfiguration.default
+        var defaults = ZonalConfiguration.default
+        for index in defaults.profiles.indices { defaults.profiles[index].tabAppearance = nil }
         let data = try encoder.encode(defaults)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertNil(json["overlappingZoneTabs"])
@@ -18,7 +67,8 @@ final class ConfigurationTests: XCTestCase {
             var configuration = defaults
             configuration.overlappingZoneTabs = mode
             XCTAssertEqual(try decoder.decode(ZonalConfiguration.self, from: encoder.encode(configuration)), configuration)
-            XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: defaults, current: configuration))
+            XCTAssertEqual(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: defaults, current: configuration),
+                           mode != .zoneShortcuts)
         }
         var invalid = json
         invalid["overlappingZoneTabs"] = "unknown"
@@ -83,6 +133,9 @@ final class ConfigurationTests: XCTestCase {
         current.profiles[0].zones[0].name = "New zone name"
         current.hotkeys = []
         current.behavior.feedbackMode = .errorsOnly
+        current.behavior.showMainStackClock = true
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: previous, current: current))
+        current.profiles[0].tabAppearance = current.tabAppearance(for: current.profiles[0])
         XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: previous, current: current))
     }
 
@@ -136,7 +189,17 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertEqual(manager.currentSnapshot(), snapshot)
     }
 
+    func testExactAssignmentFitRejectsMissingAndInvalidIDs() {
+        let id = UUID()
+        XCTAssertEqual(LocalAutomationCommand(name: "fit-assignment", arguments: [id.uuidString]), .fitAssignment(id))
+        for arguments in [[], ["main"], ["not-a-uuid"]] {
+            XCTAssertEqual(LocalAutomationCommand(name: "fit-assignment", arguments: arguments),
+                           .invalid("fit-assignment requires an assignment UUID"))
+        }
+    }
+
     func testAutomationCommandParsingIsDeterministic() {
+        XCTAssertEqual(LocalAutomationCommand(name: "app-menus", arguments: []), .appMenus)
         let assignmentID = UUID()
 
         XCTAssertEqual(
@@ -644,4 +707,1331 @@ final class ConfigurationTests: XCTestCase {
     }
 
 
+}
+
+// Fake AX attributes: no Accessibility permission or live app is involved.
+private final class CommandMenuFixture {
+    let pid: pid_t = 910001
+    let window = AXUIElementCreateApplication(910002)
+    let bar = AXUIElementCreateApplication(910003)
+    let file = AXUIElementCreateApplication(910004)
+    let menu = AXUIElementCreateApplication(910005)
+    let first = AXUIElementCreateApplication(910006)
+    let second = AXUIElementCreateApplication(910007)
+    var current = true
+    var windowCurrent = true
+    var focusedPIDs: [pid_t] = []
+    var enabled = true
+    var omitCategoryEnabled = false
+    var emptyMenu = false
+    var unreadableMenu = false
+    var menuReadDelay: TimeInterval = 0
+    var replacement: AXUIElement?
+    var presses: [AXUIElement] = []
+    var outcome: AXError = .success
+    var onPress: (() -> Void)?
+    var onAttribute: (() -> Void)?
+    var onMenuRead: (() -> Void)?
+    lazy var reader = makeReader()
+    func makeReader() -> AppCommandReader {
+        AppCommandReader(pid: pid, window: window, attribute: { [weak self] element, name in
+        guard let self else { return nil }
+        self.onAttribute?()
+        if name == kAXFocusedApplicationAttribute {
+            let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
+            return AXUIElementCreateApplication(pid)
+        }
+        if name == kAXFocusedWindowAttribute { return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098) }
+        if name == kAXMenuBarAttribute { self.onMenuRead?(); Thread.sleep(forTimeInterval: self.menuReadDelay); return self.bar }
+        if name == kAXChildrenAttribute {
+            if CFEqual(element, self.bar) { return [self.file] as CFArray }
+            if CFEqual(element, self.file) { return [self.menu] as CFArray }
+            if CFEqual(element, self.menu) {
+                if self.unreadableMenu { return nil }
+                return (self.emptyMenu ? [] : [self.first, self.replacement ?? self.second]) as CFArray
+            }
+            return [] as CFArray
+        }
+        if name == kAXRoleAttribute { return (CFEqual(element, self.menu) ? kAXMenuRole : kAXMenuItemRole) as CFString }
+        if name == kAXTitleAttribute { return (CFEqual(element, self.file) ? "File" : "Duplicate") as CFString }
+        if name == kAXEnabledAttribute {
+            if self.omitCategoryEnabled && CFEqual(element, self.file) { return nil }
+            return (self.enabled ? kCFBooleanTrue : kCFBooleanFalse)
+        }
+        if name == kAXMenuItemCmdCharAttribute { return "d" as CFString }
+        if name == kAXMenuItemCmdModifiersAttribute { return NSNumber(value: 3) }
+        return nil
+    }, press: { [unowned self] element in self.presses.append(element); self.onPress?(); return self.outcome }, diagnosticWindowID: { _ in nil })
+    }
+}
+
+extension ConfigurationTests {
+    func testAppCommandsPreserveDuplicateIdentityAndShortcutModifiers() throws {
+        let fixture = CommandMenuFixture()
+        let (roots, complete) = fixture.reader.read()
+        XCTAssertTrue(complete)
+        let commands = try XCTUnwrap(roots.first).children
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertNotEqual(commands[0].path, commands[1].path)
+        XCTAssertEqual(commands[1].shortcut, "⌥⇧⌘D")
+        XCTAssertNil(fixture.reader.execute(commands[1]))
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(fixture.presses[0], fixture.second))
+    }
+
+    func testAppCommandsRejectFocusChangesDisabledAndReplacedElements() throws {
+        for failure in 0..<3 {
+            let fixture = CommandMenuFixture()
+            let command = try XCTUnwrap(fixture.reader.read().0.first?.children.last)
+            if failure == 0 { fixture.current = false }
+            if failure == 1 { fixture.enabled = false }
+            if failure == 2 { fixture.replacement = AXUIElementCreateApplication(910008) }
+            XCTAssertNotNil(fixture.reader.execute(command))
+            XCTAssertTrue(fixture.presses.isEmpty)
+        }
+    }
+
+    func testAppCommandTimeoutNeverRetries() throws {
+        let fixture = CommandMenuFixture()
+        let command = try XCTUnwrap(fixture.reader.read().0.first?.children.last)
+        fixture.outcome = .cannotComplete
+        XCTAssertNotNil(fixture.reader.execute(command))
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
+}
+
+extension ConfigurationTests {
+    func testAXCategoryWithoutEnabledAttributeStillExposesEnabledCommands() throws {
+        let fixture = CommandMenuFixture()
+        fixture.omitCategoryEnabled = true
+        let roots = fixture.reader.read().0
+        XCTAssertTrue(try XCTUnwrap(roots.first).enabled)
+        XCTAssertTrue(try XCTUnwrap(roots.first?.children.first).enabled)
+        XCTAssertNil(fixture.reader.execute(try XCTUnwrap(roots.first?.children.first)))
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
+
+    @MainActor
+    func testNativeContextMenuReversesSectionsButNeverTheirContents() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Move to Right") {})
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        root.addItem(ZoneTabMenuItem(title: "Close Window") {})
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        // A reader-less background-tab menu still provides all captured Zonal actions.
+        XCTAssertNotNil(root.items.first?.view)
+        XCTAssertEqual(root.items.filter { $0.isEnabled && $0.view == nil }.map(\.title), ["Move to Right", "Fit to Zone", "Close Window"])
+        session.opensUpward = true; session.rebuild()
+        XCTAssertNotNil(root.items.last?.view)
+        XCTAssertEqual(root.items.filter { $0.isEnabled && $0.view == nil }.map(\.title), ["Move to Right", "Fit to Zone", "Close Window"])
+        XCTAssertEqual(TabContextMenuPolicy.sections(opensUpward: false), [.search, .zonal, .app])
+        XCTAssertEqual(TabContextMenuPolicy.sections(opensUpward: true), [.app, .zonal, .search])
+        XCTAssertTrue(TabContextMenuPolicy.opensUpward(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800), menuHeight: 300))
+        XCTAssertFalse(TabContextMenuPolicy.opensUpward(at: CGPoint(x: 100, y: 795), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800), menuHeight: 300))
+    }
+
+    @MainActor
+    func testNativeContextMenuHasRealSubmenusAndSearchesFullPaths() async throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        var fits = 0
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") { fits += 1 })
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(root.items.first { $0.submenu != nil })
+        XCTAssertEqual(category.submenu?.items.count, 2)
+        XCTAssertTrue(category.isEnabled)
+        session.setQuery("file duplicate")
+        let results = session.results.rows.compactMap(\.item).filter { $0.isEnabled && $0.action != nil }
+        XCTAssertEqual(results.count, 2)
+        XCTAssertTrue(results.allSatisfy { $0.title == "File › Duplicate" && ($0 as? ZoneTabMenuItem)?.displayedShortcut == "⌥⇧⌘D" })
+        session.setQuery("fit")
+        XCTAssertEqual(session.results.selectedItem?.title, "Fit to Zone")
+        session.setQuery("")
+        XCTAssertNotNil(root.items.first { $0.submenu != nil })
+        session.setQuery("fit")
+        session.input(key: 36, text: nil, flags: [])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(fits, 1)
+    }
+}
+
+extension ConfigurationTests {
+    @MainActor
+    func testUpwardNativeMenuKeepsAppCategoryOrder() throws {
+        let fixture = CommandMenuFixture()
+        var roots = fixture.reader.read().0
+        var edit = try XCTUnwrap(roots.first)
+        edit.path = AppCommandPath(indices: [1], titles: ["Edit"])
+        roots.append(edit)
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.opensUpward = true
+        session.setNodes(roots, complete: true)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File", "Edit"])
+        XCTAssertNotNil(root.items.last?.view)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testContextMenuSnapshotDoesNotMutateDuringTracking() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        root.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let original = root.items
+        let height = root.size.height
+        session.menuWillOpen(root)
+        session.setNodes([], complete: false)
+        XCTAssertEqual(root.items.map(ObjectIdentifier.init), original.map(ObjectIdentifier.init))
+        XCTAssertEqual(root.size.height, height)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+        session.cancel()
+    }
+
+    @MainActor
+    func testSearchHeightFitsResultsAndCapsLongListsInBothDirections() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let root = NSMenu()
+            for title in ["Fit to Zone", "Move Left", "Move Right", "Close Window"] {
+                root.addItem(ZoneTabMenuItem(title: title) {})
+            }
+            let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: false)
+            let height = root.size.height
+            let anchor = upward ? root.items.last : root.items.first
+            session.setQuery("file duplicate")
+            XCTAssertEqual(session.results.frame.height, 48)
+            XCTAssertLessThan(root.size.height, height)
+            let twoResultsHeight = root.size.height
+            for query in ["fit", "no such command"] {
+                session.setQuery(query)
+                XCTAssertEqual(session.results.frame.height, 24)
+                XCTAssertLessThan(root.size.height, twoResultsHeight)
+                XCTAssertTrue((upward ? root.items.last : root.items.first) === anchor)
+            }
+            session.maximumResultsHeight = 24
+            session.setQuery("file duplicate")
+            XCTAssertEqual(session.results.contentHeight, 48)
+            XCTAssertEqual(session.results.frame.height, 24)
+            XCTAssertNotNil(session.results.selectedItem)
+            session.setQuery("")
+            XCTAssertEqual(root.size.height, height, accuracy: 0.5)
+            XCTAssertFalse(root.items.contains { $0.title.localizedCaseInsensitiveContains("dynamic") })
+        }
+    }
+
+    @MainActor
+    func testAppleCategoryIsExcludedWithoutDroppingOtherCategories() throws {
+        let fixture = CommandMenuFixture()
+        let file = try XCTUnwrap(fixture.reader.read().0.first)
+        var apple = file
+        apple.path = AppCommandPath(indices: [99], titles: ["Apple"])
+        let root = NSMenu()
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes([file, apple], complete: false)
+        XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+        session.setQuery("duplicate")
+        XCTAssertEqual(session.results.rows.filter(\.enabled).count, 2)
+        XCTAssertTrue(session.results.rows.filter(\.enabled).allSatisfy { $0.title.hasPrefix("File ›") })
+        apple.path.titles = ["\u{F8FF}"]
+        XCTAssertTrue(apple.isAppleMenu)
+        XCTAssertFalse(file.isAppleMenu)
+    }
+
+    @MainActor
+    func testSearchSelectsEnabledResultAndReturnInvokesOnlyThatHandlerOnce() async throws {
+        let root = NSMenu()
+        var firstCalls = 0
+        var secondCalls = 0
+        let disabled = ZoneTabMenuItem(title: "Action unavailable") { XCTFail("Disabled action invoked") }
+        disabled.isEnabled = false
+        root.addItem(disabled)
+        root.addItem(ZoneTabMenuItem(title: "Action first") { firstCalls += 1 })
+        root.addItem(ZoneTabMenuItem(title: "Action second") { secondCalls += 1 })
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        session.setQuery("Action")
+        XCTAssertEqual(session.results.selectedItem?.title, "Action first")
+        session.input(key: 125, text: nil, flags: [])
+        XCTAssertEqual(session.results.selectedItem?.title, "Action second")
+        session.input(key: 126, text: nil, flags: [])
+        XCTAssertEqual(session.results.selectedItem?.title, "Action first")
+        session.setQuery("no matching item")
+        XCTAssertNil(session.results.selectedItem)
+        session.input(key: 36, text: nil, flags: [])
+        session.setQuery("Action")
+        session.input(key: 125, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(firstCalls, 0)
+        XCTAssertEqual(secondCalls, 1)
+    }
+
+    @MainActor
+    func testMenuPreparationCompletesBeforeTrackingWithWholeSnapshot() async throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        let ready = expectation(description: "Prepared menu")
+        session.prepare {
+            XCTAssertFalse(session.isPreparing)
+            XCTAssertFalse(session.isTracking)
+            XCTAssertEqual(root.items.compactMap { $0.submenu?.title }, ["File"])
+            XCTAssertEqual(root.items.first { $0.submenu != nil }?.submenu?.items.count, 2)
+            ready.fulfill()
+        }
+        XCTAssertTrue(session.isPreparing)
+        await fulfillment(of: [ready], timeout: 3)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testSearchReturnExecutesExactAppResultAfterMenuDismissal() async throws {
+        let fixture = CommandMenuFixture()
+        let pressed = expectation(description: "Exact app command pressed")
+        fixture.onPress = { pressed.fulfill() }
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        session.setQuery("file duplicate")
+        session.input(key: 125, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        session.input(key: 36, text: nil, flags: [])
+        await fulfillment(of: [pressed], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.presses.first), fixture.second))
+    }
+
+    @MainActor
+    func testPreparationCannotPresentAfterContextChanges() async {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let closed = expectation(description: "Changed context cancels preparation")
+        session.canPresent = { false }
+        session.onClose = { closed.fulfill() }
+        session.prepare { XCTFail("Stale prepared menu presented") }
+        await fulfillment(of: [closed], timeout: 3)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertFalse(session.isTracking)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testDynamicSearchReopensFrozenMenuAtSameAnchorWithoutEndingSession() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let root = NSMenu()
+            for title in ["Fit to Zone", "Move Left", "Move Right", "Close Window"] {
+                root.addItem(ZoneTabMenuItem(title: title) {})
+            }
+            let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+            var inventoryUpdates = 0
+            session.onInventory = { _ in inventoryUpdates += 1 }
+            session.setNodes(fixture.reader.read().0, complete: true)
+            let point = CGPoint(x: 200, y: upward ? 5 : 795)
+            var heights: [CGFloat] = []
+            var closes = 0
+            session.onClose = { closes += 1 }
+            let queries: [String?] = ["file duplicate", "fit", "", nil]
+            session.popUp = { [weak session] menu, anchor, actualPoint in
+                guard let session else { XCTFail("Session lost"); return }
+                XCTAssertEqual(actualPoint, point)
+                XCTAssertEqual(session.opensUpward, upward)
+                XCTAssertTrue(anchor === (upward ? menu.items.last : menu.items.first))
+                heights.append(menu.size.height)
+                session.menuWillOpen(menu)
+                if let query = queries[heights.count - 1] {
+                    let before = menu.items.map(ObjectIdentifier.init)
+                    session.setQuery(query)
+                    XCTAssertEqual(menu.items.map(ObjectIdentifier.init), before)
+                }
+                session.menuDidClose(menu)
+            }
+            session.present(at: point, visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+            XCTAssertEqual(heights.count, 4)
+            XCTAssertLessThan(heights[1], heights[0])
+            XCTAssertLessThan(heights[2], heights[1])
+            XCTAssertEqual(heights[3], heights[0])
+            XCTAssertEqual(inventoryUpdates, 1)
+            XCTAssertEqual(closes, 1)
+            XCTAssertTrue(fixture.presses.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testQueryReopenStopsIfCapturedContextChanges() {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var current = true
+        var opens = 0
+        var closes = 0
+        session.canPresent = { current }
+        session.onClose = { closes += 1 }
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            session.setQuery("find")
+            current = false
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(closes, 1)
+        XCTAssertFalse(session.isTracking)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testCommandIconsSurviveSearchAndAppearInResultCells() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        fit.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)
+        root.addItem(fit)
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        XCTAssertNotNil(root.items.first { $0.submenu != nil }?.image)
+        XCTAssertTrue(try XCTUnwrap(root.items.first { $0.submenu != nil }?.submenu).items.allSatisfy { $0.image != nil })
+        session.setQuery("file duplicate")
+        let result = try XCTUnwrap(session.results.selectedItem)
+        let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0) as? NSTableCellView)
+        XCTAssertNotNil(result.image)
+        XCTAssertTrue(cell.imageView?.image === result.image)
+        session.setQuery("fit")
+        XCTAssertTrue(session.results.selectedItem === fit)
+        XCTAssertTrue(session.results.selectedItem?.image === fit.image)
+        XCTAssertEqual(AppCommandSymbol.name(path: .init(indices: [], titles: ["Edit", "Find…"]), isMenu: false), "magnifyingglass")
+        XCTAssertNil(AppCommandSymbol.name(path: .init(indices: [], titles: ["File", "Unrecognized action"]), isMenu: false))
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testFastQueryAndReturnUsesLatestResultsBeforeMenuReopens() async throws {
+        let fixture = CommandMenuFixture()
+        let pressed = expectation(description: "Latest search result executes")
+        fixture.onPress = { pressed.fulfill() }
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        var opens = 0
+        var closes = 0
+        session.onClose = { closes += 1 }
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            session.setQuery("does not match")
+            session.setQuery("file duplicate")
+            session.input(key: 125, text: nil, flags: [])
+            session.input(key: 36, text: nil, flags: [])
+            session.input(key: 36, text: nil, flags: [])
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        await fulfillment(of: [pressed], timeout: 3)
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(closes, 1)
+        XCTAssertEqual(fixture.presses.count, 1)
+        XCTAssertTrue(CFEqual(try XCTUnwrap(fixture.presses.first), fixture.second))
+    }
+}
+
+
+extension ConfigurationTests {
+    func testReadinessWaitAllowsMenuFocusButRejectsExternalAppOrSiblingWindow() {
+        let fixture = CommandMenuFixture()
+        let menuPID = ProcessInfo.processInfo.processIdentifier
+        fixture.focusedPIDs = [menuPID, menuPID, fixture.pid]
+        XCTAssertTrue(fixture.reader.waitForContext(transitionPID: menuPID))
+        fixture.focusedPIDs = [menuPID, menuPID, fixture.pid]
+        XCTAssertTrue(fixture.reader.waitForContext(transitionPID: 910095))
+        XCTAssertTrue(fixture.presses.isEmpty)
+        fixture.current = false
+        XCTAssertFalse(fixture.reader.waitForContext(transitionPID: menuPID))
+        fixture.current = true
+        fixture.windowCurrent = false
+        XCTAssertFalse(fixture.reader.waitForContext(transitionPID: menuPID))
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    func testFocusPolicyAllowsOnlyExpectedOpeningTransitionAndOwnMenu() {
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 20, target: 20, opening: 10, preparing: false, menuOwnsFocus: false))
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 10, target: 20, opening: 10, preparing: true, menuOwnsFocus: false))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: 10, target: 20, opening: 10, preparing: false, menuOwnsFocus: false))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: 30, target: 20, opening: 10, preparing: true, menuOwnsFocus: false))
+        XCTAssertTrue(AppCommandFocusPolicy.allowsApp(active: 30, target: 20, opening: 10, preparing: false, menuOwnsFocus: true))
+        XCTAssertFalse(AppCommandFocusPolicy.allowsApp(active: nil, target: 20, opening: nil, preparing: true, menuOwnsFocus: false))
+    }
+
+    @MainActor
+    func testMenuSearchControlsCannotRequestKeyboardOrPanelFocus() {
+        let session = TabContextMenuSession(menu: NSMenu(), reader: nil)
+        XCTAssertFalse(session.search.acceptsFirstResponder)
+        XCTAssertFalse(session.search.needsPanelToBecomeKey)
+        XCTAssertTrue(session.search.acceptsFirstMouse(for: nil))
+        XCTAssertFalse(session.results.acceptsFirstResponder)
+        XCTAssertFalse(session.results.needsPanelToBecomeKey)
+        XCTAssertFalse(session.results.table.acceptsFirstResponder)
+        XCTAssertFalse(session.results.table.needsPanelToBecomeKey)
+        XCTAssertTrue(session.results.table.acceptsFirstMouse(for: nil))
+    }
+
+    @MainActor
+    func testBackgroundMenuFocusesExactContextBeforeReadingCommands() async {
+        let fixture = CommandMenuFixture()
+        fixture.current = false
+        fixture.windowCurrent = false
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var focusRequests = 0
+        session.focusBeforeRead = { completion in
+            focusRequests += 1
+            fixture.current = true
+            fixture.windowCurrent = true
+            completion()
+        }
+        let ready = expectation(description: "Verified focused menus")
+        session.prepare {
+            XCTAssertEqual(focusRequests, 1)
+            XCTAssertEqual(session.menu.items.compactMap { $0.submenu?.title }, ["File"])
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testUnconfirmedFocusShowsZonalFallbackWithoutExecutingAppCommand() async {
+        let fixture = CommandMenuFixture()
+        fixture.current = false
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let failed = expectation(description: "Focus failure reported")
+        session.onPreparationFailure = { failed.fulfill() }
+        session.prepare {
+            XCTAssertTrue(session.isZonalOnly)
+            XCTAssertTrue(session.menu.items.allSatisfy { $0.submenu == nil })
+        }
+        await fulfillment(of: [failed], timeout: 3)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testCancelledNativeFocusCannotLeaveMenuPreparingForever() async {
+        let fixture = CommandMenuFixture()
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.preparationTimeoutDuration = .milliseconds(20)
+        session.focusBeforeRead = { _ in }
+        var cancellations = 0
+        session.cancelFocus = { cancellations += 1 }
+        let failed = expectation(description: "Unfinished focus times out")
+        session.onPreparationFailure = { failed.fulfill() }
+        session.prepare {
+            XCTAssertTrue(session.isZonalOnly)
+            XCTAssertTrue(session.menu.items.allSatisfy { $0.submenu == nil })
+        }
+        await fulfillment(of: [failed], timeout: 3)
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+}
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuIconsShareCanvasWithoutMutatingSourcesOrStretching() throws {
+        let wide = NSImage(size: NSSize(width: 20, height: 10), flipped: false) { bounds in
+            NSColor.red.setFill(); bounds.fill(); return true
+        }
+        let app = NSImage(size: NSSize(width: 1024, height: 1024))
+        let symbol = try XCTUnwrap(NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil))
+        let images = try [wide, app, symbol].map { try XCTUnwrap(TabMenuAppearance.icon($0)) }
+        XCTAssertTrue(images.allSatisfy { $0.size == NSSize(width: 16, height: 16) })
+        XCTAssertEqual(app.size, NSSize(width: 1024, height: 1024))
+        XCTAssertEqual(wide.size, NSSize(width: 20, height: 10))
+        XCTAssertEqual(images[2].isTemplate, symbol.isTemplate)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(images[0].tiffRepresentation)))
+        XCTAssertGreaterThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)).alphaComponent, 0.95)
+        XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: 0)).alphaComponent, 0.01)
+        XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh - 1)).alphaComponent, 0.01)
+    }
+
+    @MainActor
+    func testNativeMenuUsesSeparateShortcutMetadataAndUniformIconCanvases() throws {
+        let fixture = CommandMenuFixture()
+        let root = NSMenu()
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        fit.image = NSImage(size: NSSize(width: 20, height: 14))
+        root.addItem(fit)
+        let session = TabContextMenuSession(menu: root, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(root.items.first { $0.submenu != nil })
+        XCTAssertEqual(category.image?.size, fit.image?.size)
+        XCTAssertEqual(fit.image?.size, NSSize(width: 16, height: 16))
+        let command = try XCTUnwrap(category.submenu?.items.first as? ZoneTabMenuItem)
+        XCTAssertEqual(command.title, "Duplicate")
+        XCTAssertEqual(command.keyEquivalent, "d")
+        XCTAssertEqual(command.keyEquivalentModifierMask, [.option, .shift, .command])
+        XCTAssertEqual(command.displayedShortcut, "⌥⇧⌘D")
+        session.setQuery("file duplicate")
+        XCTAssertEqual(session.results.rows.first?.title, "File › Duplicate")
+        XCTAssertEqual(session.results.rows.first?.shortcut, "⌥⇧⌘D")
+        XCTAssertEqual(session.results.selectedItem?.image?.size, fit.image?.size)
+    }
+
+    @MainActor
+    func testSearchRowsAlignIconsTitlesAndShortcutRightEdgesAcrossWidths() throws {
+        let fit = ZoneTabMenuItem(title: "Fit to Zone") {}
+        let copy = ZoneTabMenuItem(title: "Edit › Copy a very long selection with a descriptive name") {}
+        copy.displayedShortcut = "⌘C"
+        let duplicate = ZoneTabMenuItem(title: "File › Duplicate") {}
+        duplicate.displayedShortcut = "⌥⇧⌘D"
+        let results = TabMenuResultsView()
+        results.setRows([fit, copy, duplicate].map { .init(item: $0) })
+        for width in [320.0, 480.0] {
+            var cells: [TabMenuResultCell] = []
+            for index in 0..<3 {
+                let cell = try XCTUnwrap(results.tableView(results.table, viewFor: nil, row: index) as? TabMenuResultCell)
+                let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                cell.frame = host.bounds
+                host.addSubview(cell)
+                host.layoutSubtreeIfNeeded()
+                XCTAssertEqual(cell.imageView?.frame, NSRect(x: 10, y: 4, width: 16, height: 16))
+                let title = try XCTUnwrap(cell.textField)
+                let titleRect = title.alignmentRect(forFrame: title.frame)
+                let shortcutRect = cell.shortcut.alignmentRect(forFrame: cell.shortcut.frame)
+                XCTAssertEqual(titleRect.minX, 34, accuracy: 0.5)
+                XCTAssertEqual(shortcutRect.maxX, width - 20, accuracy: 0.5)
+                XCTAssertEqual(cell.shortcut.alignment, .right)
+                XCTAssertLessThanOrEqual(titleRect.maxX, shortcutRect.minX - 15.5)
+                cells.append(cell)
+            }
+            XCTAssertEqual(cells[1].shortcut.frame.maxX, cells[2].shortcut.frame.maxX)
+            XCTAssertEqual(cells[1].textField?.stringValue, copy.title)
+            XCTAssertEqual(cells[2].shortcut.stringValue, "⌥⇧⌘D")
+        }
+    }
+
+    func testShortcutMetadataUsesCarbonGlyphsAndExplicitModifierMasks() {
+        XCTAssertEqual(AppCommandReader.shortcutModifiers(0), [.command])
+        XCTAssertEqual(AppCommandReader.shortcutModifiers(13), [.control, .shift])
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "D", glyph: 0).key, "d")
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "", glyph: 100).key, "\u{F702}")
+        XCTAssertEqual(AppCommandReader.glyph(2), "⇥")
+        XCTAssertEqual(AppCommandReader.glyph(9), "Space")
+        XCTAssertEqual(AppCommandReader.glyph(99), "⇪")
+        XCTAssertEqual(AppCommandReader.glyph(107), "⇟")
+        XCTAssertEqual(AppCommandReader.glyph(111), "F1")
+        XCTAssertEqual(AppCommandReader.glyph(115), "F5")
+        XCTAssertEqual(AppCommandReader.glyph(119), "F9")
+        XCTAssertEqual(AppCommandReader.glyph(146), "F19")
+        XCTAssertEqual(AppCommandReader.shortcutKey(character: "", glyph: 999).key, "")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testAppMenusHaveNoHoverTooltipsButKeepAccessiblePathsAndShortcuts() throws {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        let category = try XCTUnwrap(menu.items.first { $0.submenu != nil })
+        XCTAssertNil(category.toolTip)
+        XCTAssertTrue(try XCTUnwrap(category.submenu).items.allSatisfy { $0.toolTip == nil })
+        session.setQuery("file duplicate")
+        let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0))
+        XCTAssertNil(cell.toolTip)
+        XCTAssertTrue(cell.subviews.allSatisfy { $0.toolTip == nil })
+        XCTAssertTrue(cell.subviews.compactMap { $0 as? NSTextField }.allSatisfy { !$0.allowsExpansionToolTips })
+        XCTAssertEqual(cell.accessibilityLabel(), "File › Duplicate    ⌥⇧⌘D")
+        XCTAssertFalse(session.results.tableView(session.results.table, shouldShowCellExpansionFor: nil, row: 0))
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testConfirmedFocusDeadlineDoesNotCancelSlowFirstMenuDiscovery() async {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.15
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        session.preparationTimeoutDuration = .milliseconds(40)
+        session.onPreparationFailure = { XCTFail("Confirmed focus mislabeled as a focus timeout during menu discovery") }
+        let ready = expectation(description: "Cold menu discovery completes after focus deadline")
+        session.prepare {
+            XCTAssertFalse(session.isPreparing)
+            XCTAssertEqual(session.menu.items.compactMap { $0.submenu?.title }, ["File"])
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 2)
+        try? await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testCompactMenuViewportShowsWholeRowsAndLastRowWithoutClipping() {
+        let results = TabMenuResultsView()
+        let items = (0..<30).map { ZoneTabMenuItem(title: "Command \($0)") {} }
+        var rows = items.map { TabMenuResultsView.Row(item: $0) }
+        rows.insert(.init(item: nil), at: 5)
+        results.setRows(rows)
+        results.fit(maximumHeight: 167)
+        results.layoutSubtreeIfNeeded()
+        XCTAssertEqual(results.table.style, .plain)
+        XCTAssertFalse(results.automaticallyAdjustsContentInsets)
+        XCTAssertEqual(results.contentHeight, results.table.rect(ofRow: rows.count - 1).maxY)
+        XCTAssertTrue(rows.indices.contains { abs(results.table.rect(ofRow: $0).maxY - results.contentSize.height) < 0.5 })
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
+        for _ in 0..<40 { results.move(1) }
+        XCTAssertTrue(results.selectedItem === items.last)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: rows.count - 1)))
+        XCTAssertLessThanOrEqual(results.table.visibleRect.maxY, results.table.bounds.maxY + 0.5)
+        results.setRows([.init(item: items[0])])
+        results.fit(maximumHeight: 167)
+        results.layoutSubtreeIfNeeded()
+        XCTAssertEqual(results.frame.height, 24)
+        XCTAssertEqual(results.contentView.bounds.origin.y, 0, accuracy: 0.5)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 0)))
+    }
+
+    @MainActor
+    func testCompactSearchHeaderAndRowsKeepContentInsideBounds() throws {
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let menu = NSMenu()
+            menu.addItem(ZoneTabMenuItem(title: "Fit to Zone") {})
+            let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: true)
+            let header = try XCTUnwrap(upward ? menu.items.last?.view : menu.items.first?.view)
+            XCTAssertEqual(header.frame.height, 34)
+            XCTAssertTrue(header.bounds.contains(session.search.frame))
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 2)
+            session.setQuery("duplicate")
+            XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 1)
+            let cell = try XCTUnwrap(session.results.tableView(session.results.table, viewFor: nil, row: 0) as? TabMenuResultCell)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+            cell.frame = host.bounds; host.addSubview(cell); host.layoutSubtreeIfNeeded()
+            for child in cell.subviews { XCTAssertTrue(cell.bounds.contains(child.frame)) }
+            XCTAssertTrue(cell.shortcut.frame.maxX <= cell.bounds.maxX - 16)
+        }
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testNativeSpacingHasNoExtraInsetAndKeepsSearchSeparatorOutside() throws {
+        let results = TabMenuResultsView()
+        let items = (0..<20).map { ZoneTabMenuItem(title: "Command \($0)") {} }
+        results.setRows(items.map { .init(item: $0) })
+        results.fit(maximumHeight: 124)
+        results.layoutSubtreeIfNeeded()
+        let document = try XCTUnwrap(results.documentView)
+        XCTAssertTrue(document === results.table)
+        XCTAssertEqual(results.table.frame.minY, 0)
+        XCTAssertEqual(results.contentView.bounds.minY, 0)
+        for _ in 0..<20 { results.move(1) }
+        XCTAssertGreaterThan(results.contentView.bounds.minY, 4)
+        XCTAssertTrue(results.table.visibleRect.contains(results.table.rect(ofRow: 19)))
+        results.setRows([.init(item: items[0])])
+        results.fit(maximumHeight: 124)
+        XCTAssertEqual(results.contentView.bounds.minY, 0)
+        XCTAssertEqual(results.frame.height, 24)
+        let fixture = CommandMenuFixture()
+        for upward in [false, true] {
+            let menu = NSMenu()
+            let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+            session.opensUpward = upward
+            session.setNodes(fixture.reader.read().0, complete: true)
+            session.setQuery("duplicate")
+            XCTAssertEqual(menu.items.count, 3)
+            XCTAssertTrue(menu.items[1].isSeparatorItem)
+            XCTAssertTrue((upward ? menu.items.first : menu.items.last)?.view === session.results)
+            XCTAssertTrue((upward ? menu.items.last : menu.items.first)?.view?.subviews.contains(session.search) == true)
+        }
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testReviewSelectionSurvivesQueryReopen() async throws {
+        let root = NSMenu()
+        var executed: String?
+        root.addItem(ZoneTabMenuItem(title: "Move Left") { executed = "left" })
+        root.addItem(ZoneTabMenuItem(title: "Move Right") { executed = "right" })
+        let session = TabContextMenuSession(menu: root, reader: nil)
+        var opens = 0
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            opens += 1
+            session.menuWillOpen(menu)
+            if opens == 1 {
+                session.setQuery("move")
+                session.input(key: 125, text: nil, flags: [])
+                XCTAssertEqual(session.results.selectedItem?.title, "Move Right")
+            } else {
+                XCTAssertEqual(session.results.selectedItem?.title, "Move Right", "Reopening the same query must keep keyboard selection")
+                session.input(key: 36, text: nil, flags: [])
+            }
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+        await Task.yield()
+        XCTAssertEqual(opens, 2)
+        XCTAssertEqual(executed, "right", "Return must execute the command selected with Down")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuConfigurationAndReopeningNeverReadAXOnMainThread() async throws {
+        let fixture = CommandMenuFixture()
+        let reader = fixture.reader
+        fixture.onAttribute = { XCTAssertFalse(Thread.isMainThread, "Foreign AX must not block menu rendering") }
+        let controller = AppCommandsController(makeReader: { _, _ in reader })
+        defer { controller.close() }
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        session.menuAvailabilityTimeoutDuration = .seconds(3)
+        // The test's fake target is not a real frontmost process.
+        session.canPresent = { true }
+        let prepared = expectation(description: "Background focus validation and discovery")
+        let responsive = expectation(description: "Main actor can run during a slow AX read")
+        fixture.onAttribute = {
+            XCTAssertFalse(Thread.isMainThread)
+            if Thread.isMainThread { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        session.prepare { prepared.fulfill() }
+        TabContextMenuSession.deliver { responsive.fulfill() }
+        await fulfillment(of: [responsive], timeout: 0.2)
+        await fulfillment(of: [prepared], timeout: 3)
+        session.setQuery("duplicate")
+        let selected = try XCTUnwrap(session.results.selectedItem)
+        let rows = session.results.rows.compactMap(\.item)
+        session.rebuild()
+        XCTAssertTrue(session.results.selectedItem === selected)
+        XCTAssertEqual(session.results.rows.compactMap(\.item).map(ObjectIdentifier.init), rows.map(ObjectIdentifier.init))
+        session.setQuery("file duplicate")
+        XCTAssertTrue(session.results.rows.compactMap(\.item).allSatisfy { item in rows.contains { $0 === item } },
+                      "Filtering reuses the snapshot's command items and icons")
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testBufferedQueryUsesOpeningDirectionAndRejectsChangedWindowAfterDiscovery() async throws {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Duplicate Zonal") {})
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.setNodes(fixture.reader.read().0, complete: true)
+        session.setQuery("duplicate")
+        XCTAssertEqual(session.results.selectedItem?.title, "Duplicate Zonal")
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            session.menuWillOpen(menu)
+            XCTAssertEqual(session.results.selectedItem?.title, "File › Duplicate")
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0, y: 0, width: 800, height: 800))
+
+        let changed = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        let cancelled = expectation(description: "Window changed during discovery")
+        changed.onPreparationFailure = { cancelled.fulfill() }
+        // Use the attribute hook at the menu-bar read, after readiness succeeded.
+        fixture.onMenuRead = { fixture.windowCurrent = false }
+        changed.prepare {
+            XCTAssertTrue(changed.isZonalOnly)
+            XCTAssertTrue(changed.menu.items.allSatisfy { $0.submenu == nil })
+        }
+        await fulfillment(of: [cancelled], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuTimingSamplesHaveBoundedStorageResetAndTypedAutomation() throws {
+        let controller = AppCommandsController()
+        let menu = NSMenu()
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        session.onTiming = { controller.recordTiming($0) }
+        for index in 0..<300 { session.record(.menuLayout, since: Double(index), until: Double(index) + 0.125) }
+        XCTAssertEqual(controller.performanceSamples.count, 256)
+        XCTAssertEqual(controller.performanceSamples.first?.uptime, 44.125)
+        XCTAssertTrue(controller.performanceSamples.allSatisfy { $0.milliseconds == 125 })
+        session.record(.menuLayout, since: 3, until: 2)
+        session.record(.menuLayout, since: .nan, until: 2)
+        XCTAssertEqual(controller.performanceSamples.count, 256)
+        let result = LocalAutomationResult(state: .read, menuTimings: controller.performanceSamples)
+        XCTAssertEqual(try JSONDecoder().decode(LocalAutomationResult.self, from: JSONEncoder().encode(result)), result)
+        XCTAssertEqual(LocalAutomationCommand(name: "menu-metrics", arguments: []), .menuMetrics)
+        XCTAssertEqual(LocalAutomationCommand(name: "reset-menu-metrics", arguments: []), .resetMenuMetrics)
+        controller.clearPerformanceSamples()
+        XCTAssertTrue(controller.performanceSamples.isEmpty)
+    }
+
+    @MainActor
+    func testMenuTimingsSeparateResultUpdateTrackingAndDrawAcrossReopens() throws {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Move Left") {})
+        menu.addItem(ZoneTabMenuItem(title: "Move Right") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        var passes = 0
+        session.popUp = { [weak session] menu, _, _ in
+            guard let session else { return }
+            passes += 1
+            session.menuWillOpen(menu)
+            session.didDrawResults() // Simulated draw boundary, no AX permission or GUI needed.
+            if passes == 1 {
+                session.setQuery("m")
+                session.setQuery("move")
+            }
+            session.menuDidClose(menu)
+        }
+        session.present(at: CGPoint(x: 100, y: 5), visibleFrame: CGRect(x: 0,y: 0,width: 800,height: 800))
+        XCTAssertEqual(passes, 2)
+        for phase in [MenuTimingPhase.openToTracking, .openToDraw, .queryToTracking, .queryToDraw] {
+            XCTAssertEqual(samples.filter { $0.phase == phase }.count, 1)
+        }
+        XCTAssertEqual(samples.filter { $0.phase == .queryToResults }.map(\.queryLength), [1, 4])
+        XCTAssertEqual(samples.first { $0.phase == .queryToDraw }?.resultCount, 2)
+        XCTAssertTrue(samples.allSatisfy { $0.sessionID == session.sessionID && $0.milliseconds >= 0 })
+        let encoded = String(decoding: try JSONEncoder().encode(samples), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("Move Left"))
+        XCTAssertFalse(encoded.contains("Move Right"))
+    }
+
+    @MainActor
+    func testPreparationTimingsIncludeSlowAXDiscoveryAndUIWork() async throws {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.04
+        let session = TabContextMenuSession(menu: NSMenu(), reader: fixture.reader)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        let ready = expectation(description: "Measured preparation")
+        session.prepare { ready.fulfill() }
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertEqual(samples.map(\.phase), [.focusHandoff, .focusVerification, .axDiscovery, .uiPreparation])
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(samples.first { $0.phase == .axDiscovery }).milliseconds, 35)
+        XCTAssertFalse(samples.contains { $0.phase == .openToDraw || $0.phase == .openToTracking })
+        session.cancel()
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testMenuCacheExpiresAndSeparatesWindowAndProcessIncarnations() throws {
+        let fixture = CommandMenuFixture()
+        var now = 10.0
+        let cache = AppMenuCache(now: { now })
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: Date(timeIntervalSince1970: 1))
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        cache.store(inventory, for: key)
+        XCTAssertNotNil(cache.snapshot(for: key))
+        var other = key; other.window = AXUIElementCreateApplication(910200)
+        XCTAssertNil(cache.snapshot(for: other))
+        other = key; other.pid += 1
+        XCTAssertNil(cache.snapshot(for: other))
+        other = key; other.launchDate = Date(timeIntervalSince1970: 2)
+        XCTAssertNil(cache.snapshot(for: other), "PID reuse cannot reuse another process's menu")
+        now = 24.9
+        XCTAssertNotNil(cache.snapshot(for: key))
+        now = 25
+        XCTAssertNil(cache.snapshot(for: key), "Reads do not extend the snapshot's age")
+        var incomplete = inventory; incomplete.complete = false
+        cache.store(incomplete, for: key)
+        XCTAssertNil(cache.snapshot(for: key))
+        incomplete = inventory; incomplete.isCurrent = false
+        cache.store(incomplete, for: key)
+        XCTAssertNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testMenuCacheEvictsLeastRecentlyUsedContextAndInvalidatesByProcess() {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        let keys = (0..<5).map { AppMenuContext(pid: fixture.pid + pid_t($0), window: fixture.window, launchDate: nil) }
+        for key in keys.prefix(4) { cache.store(inventory, for: key) }
+        XCTAssertNotNil(cache.snapshot(for: keys[0]))
+        cache.store(inventory, for: keys[4])
+        XCTAssertNil(cache.snapshot(for: keys[1]))
+        XCTAssertNotNil(cache.snapshot(for: keys[0]))
+        cache.invalidate(pid: keys[0].pid)
+        XCTAssertNil(cache.snapshot(for: keys[0]))
+        XCTAssertNotNil(cache.snapshot(for: keys[2]))
+        cache.invalidate()
+        XCTAssertNil(cache.snapshot(for: keys[2]))
+    }
+
+    @MainActor
+    func testInvalidatedPrewarmCannotRestoreOldSnapshotOrDeliverTwice() async {
+        let fixture = CommandMenuFixture()
+        fixture.menuReadDelay = 0.05
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let readStarted = expectation(description: "Scan started")
+        fixture.onMenuRead = { readStarted.fulfill() }
+        var callbacks = 0
+        cache.load(key, reader: fixture.reader) { inventory in
+            callbacks += 1
+            XCTAssertFalse(inventory.isCurrent)
+        }
+        await fulfillment(of: [readStarted], timeout: 2)
+        cache.invalidate(key)
+        XCTAssertEqual(callbacks, 1)
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(callbacks, 1)
+        XCTAssertNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testFocusPrewarmIsSharedWithOpeningThenReusedWithoutAnotherScan() async throws {
+        let fixture = CommandMenuFixture()
+        let releaseScan = DispatchSemaphore(value: 0)
+        let scanStarted = expectation(description: "Focus settled and prewarm started")
+        var scans = 0
+        fixture.onMenuRead = {
+            scans += 1
+            if scans == 1 {
+                scanStarted.fulfill()
+                XCTAssertEqual(releaseScan.wait(timeout: .now() + 2), .success)
+            }
+        }
+        let controller = AppCommandsController(makeReader: { _, _ in fixture.makeReader() }, frontmostPID: { 910002 })
+        defer { controller.stop() }
+        controller.focusedWindowChanged(fixture.window)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(scans, 0, "Unused app menus must not start background discovery")
+        controller.configure(NSMenu(), expectedWindow: fixture.window)
+        controller.close()
+        controller.focusedWindowChanged(fixture.window)
+        await fulfillment(of: [scanStarted], timeout: 2)
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        let load = try XCTUnwrap(session.loadInventory)
+        session.loadInventory = { completion in
+            load(completion)
+            releaseScan.signal()
+        }
+        let prepared = expectation(description: "Opening joined prewarm")
+        session.prepare { prepared.fulfill() }
+        await fulfillment(of: [prepared], timeout: 2)
+        XCTAssertEqual(scans, 1)
+        XCTAssertTrue(controller.performanceSamples.contains { $0.phase == .cacheMiss })
+        let next = NSMenu()
+        controller.configure(next, expectedWindow: fixture.window)
+        let nextSession = try XCTUnwrap(next.delegate as? TabContextMenuSession)
+        let ready = expectation(description: "Warm opening")
+        nextSession.prepare { ready.fulfill() }
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(scans, 1, "A warm opening must not discover the AX tree again")
+        XCTAssertTrue(controller.performanceSamples.contains { $0.phase == .cacheHit })
+        XCTAssertEqual(next.items.compactMap { $0.submenu?.title }, ["File"])
+        let key = AppMenuContext(pid: 910002, window: fixture.window, launchDate: nil)
+        nextSession.menuWillOpen(next)
+        var updated = try XCTUnwrap(controller.menuCache.snapshot(for: key))
+        updated.nodes[0].path.titles = ["Updated"]
+        controller.menuCache.store(updated, for: key)
+        XCTAssertEqual(next.items.compactMap { $0.submenu?.title }, ["File"], "Refresh cannot change a tracking menu")
+        XCTAssertEqual(controller.menuCache.snapshot(for: key)?.nodes.first?.title, "Updated")
+        nextSession.execution?.onStatus?("confirmed")
+        XCTAssertNil(controller.menuCache.snapshot(for: key), "Execution outcomes invalidate the cached presentation")
+    }
+
+    @MainActor
+    func testCachedCommandStillRejectsDisabledOrReplacedLiveCommand() throws {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        cache.store(.init(nodes: fixture.reader.read().0, complete: true, isCurrent: true), for: key)
+        let command = try XCTUnwrap(cache.snapshot(for: key)?.nodes.first?.children.last)
+        XCTAssertTrue(command.enabled)
+        fixture.enabled = false
+        XCTAssertNotNil(fixture.reader.execute(command))
+        fixture.enabled = true
+        fixture.replacement = AXUIElementCreateApplication(910009)
+        XCTAssertNotNil(fixture.reader.execute(command))
+        fixture.replacement = nil
+        fixture.current = false
+        XCTAssertNotNil(fixture.reader.execute(command))
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testSearchDrawCannotMasqueradeAsInitialMenuDrawAfterIdle() {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Find") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        var samples: [MenuTimingSample] = []
+        session.onTiming = { samples.append($0) }
+        session.menuWillOpen(menu)
+        session.setQuery("find")
+        session.didDrawResults()
+        XCTAssertFalse(samples.contains { $0.phase == .openToDraw })
+        XCTAssertTrue(samples.contains { $0.phase == .queryToDraw })
+        session.cancel()
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testQueuedEscapeAfterClearingSearchDismissesExactlyOnce() {
+        let menu = NSMenu()
+        menu.addItem(ZoneTabMenuItem(title: "Find") {})
+        let session = TabContextMenuSession(menu: menu, reader: nil)
+        session.setQuery("find")
+        session.menuWillOpen(menu)
+        var closes = 0
+        session.onClose = { closes += 1 }
+        // Both events may already be captured before the tap snapshot updates.
+        session.input(key: 53, text: nil, flags: [])
+        XCTAssertEqual(session.query, "")
+        XCTAssertEqual(closes, 0)
+        session.input(key: 53, text: nil, flags: [])
+        session.input(key: 53, text: nil, flags: [])
+        XCTAssertEqual(closes, 1)
+        XCTAssertFalse(session.isTracking)
+    }
+
+    func testSelfCommandReadsPressAndDiagnosticsUseMainWhileForeignReadsStayOnWorker() async throws {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let own = AXUIElementCreateApplication(ownPID)
+        let bar = AXUIElementCreateApplication(910102)
+        let category = AXUIElementCreateApplication(910103)
+        let wrapper = AXUIElementCreateApplication(910104)
+        var presses = 0
+        var diagnosticReads = 0
+        // The fake own-process handle represents both focused window and command.
+        // Attribute/action providers never call real AX, so no permission is needed.
+        let reader = AppCommandReader(pid: ownPID, window: own, attribute: { element, name in
+            var pid: pid_t = 0
+            AXUIElementGetPid(element, &pid)
+            XCTAssertEqual(Thread.isMainThread, pid == ownPID)
+            if name == kAXFocusedApplicationAttribute || name == kAXFocusedWindowAttribute { return own }
+            if name == kAXMenuBarAttribute { return bar }
+            if name == kAXChildrenAttribute {
+                if CFEqual(element, bar) { return [category] as CFArray }
+                if CFEqual(element, category) { return [wrapper] as CFArray }
+                if CFEqual(element, wrapper) { return [own] as CFArray }
+                return [] as CFArray
+            }
+            if name == kAXRoleAttribute { return (CFEqual(element, wrapper) ? kAXMenuRole : kAXMenuItemRole) as CFString }
+            if name == kAXTitleAttribute { return (CFEqual(element, category) ? "File" : "Find") as CFString }
+            if name == kAXEnabledAttribute { return kCFBooleanTrue }
+            return nil
+        }, press: { element in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(CFEqual(element, own))
+            presses += 1
+            return .success
+        }, diagnosticWindowID: { element in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(CFEqual(element, own))
+            diagnosticReads += 1
+            return nil
+        })
+        let done = expectation(description: "Own and foreign AX routed safely")
+        reader.queue.async {
+            let (nodes, complete) = reader.read()
+            XCTAssertTrue(complete)
+            if let command = nodes.first?.children.first { XCTAssertNil(reader.execute(command)) }
+            else { XCTFail("Missing fake command") }
+            _ = reader.contextDiagnostic()
+            done.fulfill()
+        }
+        await fulfillment(of: [done], timeout: 3)
+        XCTAssertEqual(presses, 1)
+        XCTAssertEqual(diagnosticReads, 2)
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testEmptySubmenusAreCompleteAndCacheableButUnreadableChildrenAreNot() {
+        let fixture = CommandMenuFixture()
+        fixture.emptyMenu = true
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let (nodes, complete) = fixture.reader.read()
+        XCTAssertTrue(complete)
+        XCTAssertEqual(nodes.count, 1)
+        XCTAssertTrue(nodes[0].isMenu)
+        XCTAssertTrue(nodes[0].children.isEmpty)
+        cache.store(.init(nodes: nodes, complete: complete, isCurrent: true), for: key)
+        XCTAssertNotNil(cache.snapshot(for: key))
+        fixture.unreadableMenu = true
+        XCTAssertFalse(fixture.reader.read().1)
+        cache.invalidate()
+        cache.store(.init(nodes: [], complete: true, isCurrent: true), for: key)
+        XCTAssertNotNil(cache.snapshot(for: key), "A verified empty menu bar is a valid negative cache entry")
+    }
+
+    func testCachedEnabledStateRefreshesWithoutRediscoveringTree() throws {
+        let fixture = CommandMenuFixture()
+        let inventory = AppMenuInventory(nodes: fixture.reader.read().0, complete: true, isCurrent: true)
+        fixture.onMenuRead = { XCTFail("Enabled refresh must not enumerate the menu bar") }
+        fixture.enabled = false
+        let disabled = try XCTUnwrap(fixture.reader.refreshEnabled(inventory))
+        XCTAssertTrue(disabled.nodes.flatMap { [$0] + $0.descendants }.allSatisfy { !$0.enabled })
+        fixture.enabled = true
+        let enabled = try XCTUnwrap(fixture.reader.refreshEnabled(disabled))
+        XCTAssertTrue(enabled.nodes.flatMap { [$0] + $0.descendants }.allSatisfy(\.enabled))
+        XCTAssertTrue(fixture.presses.isEmpty)
+        fixture.windowCurrent = false
+        XCTAssertFalse(try XCTUnwrap(fixture.reader.refreshEnabled(inventory)).isCurrent)
+    }
+
+    @MainActor
+    func testCommandRefreshPreservesNewOpeningWaiterAndDropsSupersededScan() async {
+        let fixture = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: fixture.pid, window: fixture.window, launchDate: nil)
+        let started = expectation(description: "Old scan started")
+        let release = DispatchSemaphore(value: 0)
+        var scans = 0
+        fixture.onMenuRead = {
+            scans += 1
+            if scans == 1 { started.fulfill(); _ = release.wait(timeout: .now() + 2) }
+        }
+        let ready = expectation(description: "New opening receives refreshed inventory")
+        var deliveries = 0
+        cache.load(key, reader: fixture.reader) { inventory in
+            deliveries += 1
+            XCTAssertTrue(inventory.isCurrent)
+            XCTAssertTrue(inventory.complete)
+            ready.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        cache.refresh(key)
+        XCTAssertEqual(deliveries, 0, "Command invalidation must not fail a newer opening")
+        release.signal()
+        await fulfillment(of: [ready], timeout: 3)
+        XCTAssertEqual(deliveries, 1)
+        XCTAssertEqual(scans, 2)
+        XCTAssertNotNil(cache.snapshot(for: key))
+    }
+
+    @MainActor
+    func testDiscoveryIsSerializedAcrossReaders() async {
+        let first = CommandMenuFixture(), second = CommandMenuFixture()
+        let cache = AppMenuCache()
+        let key = AppMenuContext(pid: first.pid, window: first.window, launchDate: nil)
+        var other = key; other.launchDate = Date(timeIntervalSince1970: 7)
+        let started = expectation(description: "First scan started")
+        let release = DispatchSemaphore(value: 0)
+        let secondStarted = DispatchSemaphore(value: 0)
+        first.onMenuRead = { started.fulfill(); _ = release.wait(timeout: .now() + 2) }
+        second.onMenuRead = { secondStarted.signal() }
+        let done = expectation(description: "Both scans completed"); done.expectedFulfillmentCount = 2
+        cache.load(key, reader: first.reader) { _ in done.fulfill() }
+        await fulfillment(of: [started], timeout: 2)
+        cache.load(other, reader: second.reader) { _ in done.fulfill() }
+        XCTAssertEqual(secondStarted.wait(timeout: .now() + 0.05), .timedOut)
+        release.signal()
+        await fulfillment(of: [done], timeout: 3)
+        XCTAssertEqual(secondStarted.wait(timeout: .now()), .success)
+    }
+
+    @MainActor
+    func testSlowMenusFallBackToUsableZonalActionsAndIgnoreLateInventory() async {
+        let fixture = CommandMenuFixture()
+        let menu = NSMenu()
+        var closes = 0
+        menu.addItem(ZoneTabMenuItem(title: "Close Window") { closes += 1 })
+        let session = TabContextMenuSession(menu: menu, reader: fixture.reader)
+        session.menuAvailabilityTimeoutDuration = .milliseconds(25)
+        var late: (@MainActor @Sendable (AppMenuInventory, Bool) -> Void)?
+        session.loadInventory = { late = $0 }
+        let shown = expectation(description: "Zonal menu available without app inventory")
+        session.prepare { shown.fulfill() }
+        await fulfillment(of: [shown], timeout: 2)
+        XCTAssertTrue(session.isZonalOnly)
+        XCTAssertFalse(session.isPreparing)
+        XCTAssertEqual(menu.items.filter { $0.action != nil }.map(\.title), ["Close Window"])
+        late?(.init(nodes: fixture.reader.read().0, complete: true, isCurrent: true), false)
+        XCTAssertTrue(menu.items.allSatisfy { $0.submenu == nil })
+        session.setQuery("close")
+        session.input(key: 36, text: nil, flags: [])
+        await Task.yield()
+        XCTAssertEqual(closes, 1)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    @MainActor
+    func testUserCancellationImmediatelyStopsCapturingPreparation() throws {
+        let fixture = CommandMenuFixture()
+        let controller = AppCommandsController(makeReader: { _, _ in fixture.reader }, frontmostPID: { 910002 })
+        defer { controller.stop() }
+        let menu = NSMenu()
+        controller.configure(menu, expectedWindow: fixture.window)
+        let session = try XCTUnwrap(menu.delegate as? TabContextMenuSession)
+        session.focusBeforeRead = { _ in }
+        session.prepare { XCTFail("Cancelled menu must not present") }
+        XCTAssertTrue(controller.isCapturingInput)
+        controller.cancelPreparation()
+        XCTAssertFalse(controller.isCapturingInput)
+        XCTAssertFalse(session.isPreparing)
+    }
+
+    @MainActor
+    func testCommandFailureReportsNonmodalCallbackExactlyOnce() async throws {
+        let fixture = CommandMenuFixture()
+        let command = try XCTUnwrap(fixture.reader.read().0.first?.children.first)
+        fixture.outcome = .cannotComplete
+        let execution = AppCommandExecution(reader: fixture.reader)
+        let reported = expectation(description: "Error reported without a modal loop")
+        execution.onFailure = { message in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(message.contains("did not confirm"))
+            reported.fulfill()
+        }
+        execution.execute(command)
+        await fulfillment(of: [reported], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1)
+    }
+
+    func testUnusedLegacyTabGlobalsDoNotReconcileOverriddenProfiles() {
+        var before = ZonalConfiguration.default
+        for i in before.profiles.indices { before.profiles[i].tabAppearance = before.tabAppearance(for: before.profiles[i]) }
+        var after = before
+        after.tabEdge = before.tabEdge == .top ? .bottom : .top
+        after.tabShowsNames.toggle()
+        after.overlappingZoneTabs = .allWindows
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
+        after.profiles[0].tabAppearance = nil
+        XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
+    }
 }

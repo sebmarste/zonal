@@ -5,6 +5,84 @@ import XCTest
 
 @MainActor
 final class ZoneTabTests: XCTestCase {
+    func testProfileSwitchRestoresSpacingTabsAndClockWithoutChangingOtherProfile() throws {
+        let (store, service, tracker, manager, _, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var config = store.loadConfiguration()
+        let baseline = config.profiles[0]
+        var alternate = baseline
+        alternate.id = "alternate"
+        alternate.zoneSpacing = 6
+        alternate.tabAppearance = .init(edge: .left, showsNames: false, overlappingTabs: .allWindows, showsClock: true)
+        config.profiles.append(alternate)
+        for id in [alternate.id, baseline.id, alternate.id] {
+            config.activeProfileID = id
+            XCTAssertTrue(store.saveConfiguration(config))
+            manager.reloadProfiles(); service.reconcile()
+            let current = manager.selectedProfile(for: manager.currentSnapshot())
+            let appearance = config.tabAppearance(for: current)
+            let bounds = LayoutEngine().zoneFrame(for: current.zones[0], in: manager.currentSnapshot().displays[0].placementFrame, spacing: current.zoneSpacing)
+            let expected = ZoneTabLayout(zoneFrame: bounds, edge: appearance.edge, style: current.zones[0].tabStyle).windowFrame
+            let tabs = try XCTUnwrap(service.tabSnapshots().first)
+            XCTAssertEqual(tabs.edge, appearance.edge)
+            XCTAssertEqual(tabs.showsNames, appearance.showsNames)
+            XCTAssertEqual(tabs.showsClock, appearance.showsClock)
+            XCTAssertEqual(tabs.layout.windowFrame, expected)
+            XCTAssertEqual(service.targetFrame(for: assignments[0], profile: current, snapshot: manager.currentSnapshot())?.frame, expected)
+        }
+        XCTAssertEqual(store.loadConfiguration().profiles[0], baseline)
+    }
+
+    func testRedundantFittedFrameNotificationPreservesSpacingIntentButRealResizeIsCustom() throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let profile = manager.selectedProfile(for: manager.currentSnapshot())
+        let target = try XCTUnwrap(service.targetFrame(for: assignments[0], profile: profile, snapshot: manager.currentSnapshot()))
+        XCTAssertEqual(service.recordCustomFrame(for: windows[0], frame: target.frame), .saved)
+        let fitted = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertTrue(fitted.fitsZone(in: profile.id))
+        let custom = target.frame.insetBy(dx: 100, dy: 100)
+        XCTAssertEqual(service.recordCustomFrame(for: windows[0], frame: custom), .saved)
+        XCTAssertFalse(try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id }).fitsZone(in: profile.id))
+    }
+
+    func testDelayedFrameCaptureCannotWriteOldGeometryIntoNewProfile() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        tracker.onWindowFrameChanged?(windows[0])
+        var config = store.loadConfiguration()
+        var alternate = config.profiles[0]
+        alternate.id = "alternate"
+        alternate.zoneSpacing = 16
+        config.profiles.append(alternate)
+        config.activeProfileID = alternate.id
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles(); service.reconcile()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertNil(saved.placementsByProfileID[alternate.id])
+        XCTAssertTrue(saved.fitsZone(in: alternate.id))
+    }
+
+    func testProfileAppearanceFallsBackToExistingGlobalSettings() throws {
+        var configuration = ZonalConfiguration.default
+        configuration.tabEdge = .bottom
+        configuration.tabShowsNames = false
+        configuration.behavior.showMainStackClock = true
+        let profile = configuration.profiles[0]
+        let saved = try JSONDecoder().decode(ZonalConfiguration.self, from: JSONEncoder().encode(configuration))
+        XCTAssertNil(saved.profiles[0].tabAppearance)
+        XCTAssertEqual(saved.tabAppearance(for: profile), .init(edge: .bottom, showsNames: false, overlappingTabs: .zoneShortcuts, showsClock: true))
+        var customized = profile
+        customized.tabAppearance = .init(edge: .right, showsNames: true, overlappingTabs: .currentZoneOnly, showsClock: false)
+        XCTAssertEqual(configuration.tabAppearance(for: customized), customized.tabAppearance)
+        XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: configuration, current: {
+            var updated = configuration; updated.profiles[0] = customized; return updated
+        }()))
+        // Appearance-only changes do not alter zone geometry; the container compares effective tab edges.
+        XCTAssertTrue(ZoneReflowPolicy.changedZones(from: profile, to: customized).isEmpty)
+    }
+
     func testSpacingUsesSameBoundsForWindowTargetsAndTabSurfaces() throws {
         let (store, service, tracker, manager, _, assignments) = try fixture()
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
@@ -1193,6 +1271,7 @@ final class ZoneTabTests: XCTestCase {
         let (store, service, tracker, manager, _, original) = try fixture(inventory: inventory)
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
         var config = store.loadConfiguration()
+        config.behavior.showMainStackClock = true
         config.profiles[0].zones = [Zone(id: .left, name: "Left", frame: .full),
             Zone(id: .main, name: "Main", frame: .full, windowPresentation: .tabs),
             Zone(id: .right, name: "Right", frame: .full)]
@@ -1210,6 +1289,7 @@ final class ZoneTabTests: XCTestCase {
             assignmentRecencyByZone: [.left: [assignments[2].id, assignments[1].id]]))
         let bytes = try Data(contentsOf: store.workspaceURL)
         let tabs = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertTrue(tabs.showsClock)
         XCTAssertEqual(service.tabSnapshots().count, 1)
         XCTAssertEqual(tabs.items.map(\.assignmentID), [assignments[0].id])
         XCTAssertEqual(tabs.otherZoneItems.map(\.assignmentID), [assignments[2].id, assignments[3].id])
@@ -1235,6 +1315,7 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertEqual(focusedTabs.otherZoneItems.map(\.assignmentID), [assignments[0].id, assignments[3].id])
         XCTAssertEqual(focusedTabs.zoneID, tabs.zoneID, "Keep the same panel identity when the primary zone changes")
         XCTAssertEqual(focusedTabs.layout, tabs.layout)
+        XCTAssertTrue(focusedTabs.showsClock)
         inventory.focusedWindow = inventory.windows[3]
         _ = tracker.captureFocusedWindow(origin: "shared-tab-test")
         let rightTabs = try XCTUnwrap(service.tabSnapshots().first)
@@ -1374,6 +1455,134 @@ final class ZoneTabTests: XCTestCase {
         }
     }
 
+    func testProfileClockRefreshReadsLatestAppearanceWithoutReconciliation() throws {
+        let (store, service, tracker, _, _, _) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let original = try XCTUnwrap(service.tabSnapshots().first)
+        var config = store.loadConfiguration()
+        let baseline = config
+        config.profiles[0].tabAppearance = config.tabAppearance(for: config.profiles[0])
+        config.profiles[0].tabAppearance?.showsClock = true
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: baseline, current: config))
+        XCTAssertTrue(store.saveConfiguration(config))
+        let visible = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertTrue(visible.showsClock)
+        XCTAssertEqual(visible.layout, original.layout)
+        XCTAssertEqual(visible.fittedWindowIDs, original.fittedWindowIDs)
+        config.profiles[0].tabAppearance?.showsClock = false
+        XCTAssertTrue(store.saveConfiguration(config))
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+    }
+
+    func testClockOnlyAppearsInMainGroupAndTogglesWithoutChangingPlacement() throws {
+        let (store, service, tracker, _, _, _) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let original = try XCTUnwrap(service.tabSnapshots().first)
+        XCTAssertFalse(original.showsClock)
+        var config = store.loadConfiguration()
+        config.behavior.showMainStackClock = true
+        store.saveConfiguration(config)
+        XCTAssertTrue(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+        XCTAssertEqual(service.tabSnapshots().first?.layout, original.layout)
+        config.profiles[0].mainZoneID = .left
+        config.profiles[0].zones.append(Zone(id: .left, name: "Main elsewhere",
+            frame: NormalizedFrame(x: 0, y: 0, width: 0.5, height: 1)))
+        store.saveConfiguration(config)
+        service.reconcile()
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+        config.profiles[0].mainZoneID = .main
+        config.behavior.showMainStackClock = false
+        store.saveConfiguration(config)
+        service.reconcile()
+        XCTAssertFalse(try XCTUnwrap(service.tabSnapshots().first).showsClock)
+    }
+
+    func testClockIncludesLocalizedDateTimeAndRollsOverAtMidnight() throws {
+        let utc = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let locale = Locale(identifier: "en_US_POSIX")
+        let date = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-05T23:59:00Z"))
+        let before = ZoneTabClockLabel.text(for: date, locale: locale, timeZone: utc)
+        XCTAssertTrue(before.contains("Thu"))
+        XCTAssertTrue(before.contains("Nov"))
+        XCTAssertTrue(before.contains("5"))
+        XCTAssertTrue(before.contains(":59"))
+        let after = ZoneTabClockLabel.text(for: date.addingTimeInterval(60), locale: locale, timeZone: utc)
+        XCTAssertTrue(after.contains("Fri"))
+        XCTAssertTrue(after.contains("6"))
+        XCTAssertTrue(after.contains(":00"))
+        let vertical = ZoneTabClockLabel.text(for: date, stacked: true, locale: locale, timeZone: utc)
+        XCTAssertEqual(vertical.components(separatedBy: "\n").count, 2)
+        let german = ZoneTabClockLabel.text(for: date, locale: Locale(identifier: "de_DE"), timeZone: utc)
+        XCTAssertTrue(german.contains("23:59"))
+        XCTAssertNotEqual(german, before)
+    }
+
+    func testClockFitsInsideNarrowAndWideStripsOnEveryEdge() throws {
+        func labels(in view: NSView) -> [NSTextField] {
+            if let label = view as? NSTextField, label.accessibilityIdentifier() == "main-stack-clock" { return [label] }
+            return view.subviews.flatMap { labels(in: $0) }
+        }
+        for edge in ZoneTabEdge.allCases {
+            for width: CGFloat in [240, 700] {
+                let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: width, height: 400), edge: edge)
+                let own = (1...6).map { switcherItem(assignmentID: UUID(), windowID: UInt32($0), zoneID: .main) }
+                let peer = switcherItem(assignmentID: UUID(), windowID: 7, zoneID: .left)
+                let model = ZoneTabSnapshot(zoneID: .main, edge: edge, layout: layout, items: own,
+                    otherZoneItems: [peer], showsClock: true)
+                let panel = ZoneTabController.makePanel()
+                defer { panel.orderOut(nil) }
+                panel.setFrame(CGRect(origin: .zero, size: layout.panelFrame(edge: edge).size), display: false)
+                let host = NSHostingView(rootView: ZoneTabStripView(snapshot: model, focus: { _ in }))
+                host.sizingOptions = []
+                panel.contentView = host
+                host.frame = CGRect(origin: .zero, size: panel.frame.size)
+                host.layoutSubtreeIfNeeded()
+                host.displayIfNeeded()
+                let label = try XCTUnwrap(labels(in: host).first)
+                let passive = try XCTUnwrap(label as? ZoneTabClockField)
+                XCTAssertFalse(passive.acceptsFirstResponder)
+                XCTAssertFalse(passive.needsPanelToBecomeKey)
+                XCTAssertFalse(passive.mouseDownCanMoveWindow)
+                XCTAssertFalse(passive.isSelectable)
+                XCTAssertFalse(passive.isEditable)
+                let responder = panel.firstResponder
+                for type: NSEvent.EventType in [.leftMouseDown, .rightMouseDown, .otherMouseDown] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: .zero,
+                        modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 2, pressure: 1))
+                    XCTAssertTrue(passive.acceptsFirstMouse(for: event))
+                    XCTAssertTrue(passive.shouldDelayWindowOrdering(for: event))
+                    switch type {
+                    case .leftMouseDown: passive.mouseDown(with: event)
+                    case .rightMouseDown: passive.rightMouseDown(with: event)
+                    default: passive.otherMouseDown(with: event)
+                    }
+                }
+                XCTAssertTrue(panel.firstResponder === responder)
+                XCTAssertFalse(panel.isKeyWindow)
+                XCTAssertEqual(labels(in: host).count, 1)
+                XCTAssertFalse(label.stringValue.isEmpty)
+                XCTAssertEqual(label.stringValue.contains("\n"), edge.isVertical)
+                XCTAssertFalse(panel.canBecomeKey)
+                let clockBounds = label.convert(label.bounds, to: host)
+                XCTAssertGreaterThan(clockBounds.width, 20)
+                XCTAssertGreaterThanOrEqual(clockBounds.minX, 0)
+                XCTAssertLessThanOrEqual(clockBounds.maxX, host.bounds.maxX)
+                let trailingEdge = layout.stripFrame.maxX - layout.panelFrame(edge: edge).minX - layout.tabPadding
+                XCTAssertLessThanOrEqual(clockBounds.maxX, trailingEdge)
+                XCTAssertGreaterThanOrEqual(clockBounds.maxX, trailingEdge - 12)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: URL(fileURLWithPath: "/tmp/zonal-clock-\(edge.rawValue)-\(Int(width)).png"))
+                host.rootView = ZoneTabStripView(snapshot: ZoneTabSnapshot(zoneID: .main, edge: edge,
+                    layout: layout, items: own), focus: { _ in })
+                host.layoutSubtreeIfNeeded()
+                XCTAssertTrue(labels(in: host).isEmpty)
+            }
+        }
+    }
+
     func testSharedStripPinsFixedWidthShortcutsAtFarEndOnAllEdges() throws {
         for edge in ZoneTabEdge.allCases {
             let size = edge.isVertical ? CGSize(width: 1000, height: 500) : CGSize(width: 700, height: 800)
@@ -1456,5 +1665,65 @@ private final class TabCloseAccess: AXCloseAccess, @unchecked Sendable {
     }
     func matches(_ candidate: AXUIElement) -> Bool {
         lock.withLock { element.map { CFEqual($0, candidate) } ?? false }
+    }
+}
+
+
+extension ZoneTabTests {
+    func testLayoutEditDiscardsPendingManualFrameCapture() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var window = windows[0]
+        window.observedFrame = CGRect(x: 90, y: 100, width: 800, height: 600)
+        tracker.onWindowFrameChanged?(window)
+        var config = store.loadConfiguration()
+        config.profiles[0].zoneSpacing = 16
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertTrue(saved.fitsZone(in: config.profiles[0].id))
+    }
+
+    func testTabActionDeclinesUnavailableWindowsAndRecoveryWithoutSaving() throws {
+        let inventory = Inventory()
+        let (store, service, tracker, manager, _, assignments) = try fixture(inventory: inventory)
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let engine = RestoreEngine(profileManager: manager, windowRegistry: WindowRegistry(),
+            windowTracker: tracker, windowController: WindowController(frameProvider: { $0.observedFrame }),
+            workspaceState: service, store: store)
+        let bytes = try Data(contentsOf: store.workspaceURL)
+        XCTAssertFalse(engine.isTabPresentationSuspended)
+        XCTAssertNotNil(service.currentProfileContext().assignments.first { $0.id == assignments[0].id })
+        inventory.windows[0].isMinimized = true
+        tracker.reconcile()
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        inventory.windows[0].isMinimized = false
+        inventory.windows[0].isFullScreen = true
+        tracker.reconcile()
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        inventory.windows[0].isFullScreen = false
+        tracker.reconcile()
+        XCTAssertTrue(service.beginSessionRecovery())
+        XCTAssertFalse(engine.performTabAction(assignmentID: assignments[0].id, action: .fit))
+        XCTAssertFalse(engine.performTabAction(assignmentID: UUID(), action: .fit))
+        XCTAssertEqual(try Data(contentsOf: store.workspaceURL), bytes)
+    }
+
+    func testCosmeticProfileEditDoesNotDiscardPendingManualFrameCapture() async throws {
+        let (store, service, tracker, manager, windows, assignments) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        var window = windows[0]
+        window.observedFrame = CGRect(x: 90, y: 100, width: 800, height: 600)
+        tracker.onWindowFrameChanged?(window)
+        var config = store.loadConfiguration()
+        config.profiles[0].name = "Renamed while dragging"
+        var appearance = config.tabAppearance(for: config.profiles[0]); appearance.showsClock.toggle()
+        config.profiles[0].tabAppearance = appearance
+        XCTAssertTrue(store.saveConfiguration(config))
+        manager.reloadProfiles()
+        try await Task.sleep(for: .milliseconds(650))
+        let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
+        XCTAssertFalse(saved.fitsZone(in: config.profiles[0].id))
     }
 }

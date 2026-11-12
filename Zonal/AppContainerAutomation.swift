@@ -8,7 +8,13 @@ extension AppContainer {
         guard automationServer == nil else { return }
         let server = LocalAutomationSocketServer { [weak self] request, reply in
             guard let self else { return }
-            reply(self.response(to: request))
+            if case .appMenus = LocalAutomationCommand(name: request.command, arguments: request.arguments) {
+                self.appCommands.inspectActiveMenus { diagnostics in
+                    reply(LocalAutomationResponse(apiVersion: LocalAutomationProtocol.currentVersion,
+                        requestID: request.id, command: request.command, ok: true, message: "App menu inventory read",
+                        result: LocalAutomationResult(state: .read, diagnostics: diagnostics), error: nil))
+                }
+            } else { reply(self.response(to: request)) }
         }
         do {
             try server.start()
@@ -52,6 +58,8 @@ extension AppContainer {
         switch LocalAutomationCommand(name: command, arguments: arguments) {
         case .read(let kind):
             return success("\(kind.rawValue.capitalized) read", result: automationReadResult(kind))
+        case .appMenus:
+            return success("App menu inventory read", result: LocalAutomationResult(state: .read, diagnostics: appCommands.lastInventory))
         case .diagnostics:
             return success(
                 "Diagnostics read",
@@ -68,6 +76,11 @@ extension AppContainer {
                     healthFindings: runHealthCheck()
                 )
             )
+        case .menuMetrics:
+            return success("Menu timings read", result: LocalAutomationResult(state: .read, menuTimings: appCommands.performanceSamples))
+        case .resetMenuMetrics:
+            appCommands.clearPerformanceSamples()
+            return success("Menu timings reset", state: .completed)
         case .switcherMetrics:
             return success(
                 "Switcher metrics read",
@@ -160,6 +173,17 @@ extension AppContainer {
                 return failure("no_window_in_zone", "No previous window is available in the current zone")
             }
             return success("Previous window focus accepted", state: .accepted)
+        case .fitAssignment(let assignmentID):
+            let context = workspaceState.currentProfileContext()
+            guard let assignment = context.assignments.first(where: { $0.id == assignmentID }),
+                  assignment.managementMode == .managed,
+                  windowRegistry.bestMatch(for: assignment, in: context.windows) != nil else {
+                return failure("no_live_window", "No managed live window for assignment")
+            }
+            guard restoreEngine.performTabAction(assignmentID: assignmentID, action: .fit) else {
+                return failure("window_action_declined", "Fit declined: the window is unavailable, suspended, minimized, full screen or could not be saved")
+            }
+            return success("Fit accepted for assignment", state: .accepted)
         case .focusAssignment(let assignmentID):
             let model = workspaceState.refreshSwitcherSnapshot(mode: .allWindows, resetSelection: true)
             guard let item = model.zones.flatMap(\.items).first(where: {

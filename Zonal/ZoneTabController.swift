@@ -64,6 +64,7 @@ struct ZoneTabSnapshot: Equatable {
     var otherZoneItems: [SwitcherItem] = []
     var stackItems: [SwitcherItem] = []
     var fittedWindowIDs: Set<LiveWindowID> = []
+    var showsClock = false
     var moveDestinations: [Zone] = []
     var sizeActions: [UUID: ZoneTabAction] = [:]
 
@@ -202,6 +203,7 @@ final class ZoneTabController: NSObject {
     private let snapshots: () -> [ZoneTabSnapshot]
     private let focus: (UUID) -> Void
     private let performAction: (UUID, ZoneTabAction) -> Void
+    private let configureMenu: (UUID, NSMenu) -> Void
     private let prepareDrag: (UUID) -> ZoneTabDragPlan?
     private let radiusQuery: (UInt32) -> CGFloat?
     private let isSuspended: () -> Bool
@@ -224,6 +226,7 @@ final class ZoneTabController: NSObject {
 
     init(snapshots: @escaping () -> [ZoneTabSnapshot], focus: @escaping (UUID) -> Void,
          performAction: @escaping (UUID, ZoneTabAction) -> Void = { _, _ in },
+         configureMenu: @escaping (UUID, NSMenu) -> Void = { _, _ in },
          prepareDrag: @escaping (UUID) -> ZoneTabDragPlan? = { _ in nil },
          radiusQuery: ((UInt32) -> CGFloat?)? = nil,
          isSuspended: @escaping () -> Bool = { false },
@@ -236,6 +239,7 @@ final class ZoneTabController: NSObject {
         self.snapshots = snapshots
         self.focus = focus
         self.performAction = performAction
+        self.configureMenu = configureMenu
         self.prepareDrag = prepareDrag
         self.isSuspended = isSuspended
         self.visibleWindowQuery = visibleWindowQuery
@@ -244,6 +248,18 @@ final class ZoneTabController: NSObject {
         let reader = WindowCornerRadiusReader()
         self.radiusQuery = radiusQuery ?? { reader.radius(for: $0) }
         super.init()
+    }
+
+    func openFocusedContextMenu() -> Bool {
+        func buttons(_ view: NSView) -> [ZoneTabNativeButton] {
+            if let button = view as? ZoneTabNativeButton { return [button] }
+            return view.subviews.flatMap(buttons)
+        }
+        refresh()
+        let focused = presentations.values.flatMap { buttons($0.host) }.filter(\.isActiveTab)
+        guard focused.count == 1, let button = focused.first, let window = button.window else { return false }
+        button.showContextMenu(at: window.convertPoint(toScreen: button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)))
+        return true
     }
 
     private let dragOverlay = HotZoneOverlayController()
@@ -392,7 +408,7 @@ final class ZoneTabController: NSObject {
             let footprint = model.panelFrame()
             let frame = WindowOutlineCoordinatePolicy().appKitFrame(for: footprint, mainScreenFrame: mainScreen.frame)
             let panel = previous?.panel ?? Self.makePanel()
-            let view = ZoneTabStripView(snapshot: model, focus: focus, cornerRadius: radius, performAction: performAction,
+            let view = ZoneTabStripView(snapshot: model, focus: focus, cornerRadius: radius, performAction: performAction, configureMenu: configureMenu,
                 beginPress: { [weak self] id, event, action in self?.beginPress(id, event: event, sizeAction: action) })
             let host = previous?.host ?? ZoneTabHostingView(rootView: view)
             let contentChanged = previous?.snapshot != model || previous?.cornerRadius != radius
@@ -494,6 +510,7 @@ struct ZoneTabStripView: View {
     var focus: (UUID) -> Void
     var cornerRadius: CGFloat = 16
     var performAction: (UUID, ZoneTabAction) -> Void = { _, _ in }
+    var configureMenu: (UUID, NSMenu) -> Void = { _, _ in }
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
     var body: some View {
         let panel = snapshot.panelFrame()
@@ -516,23 +533,15 @@ struct ZoneTabStripView: View {
 
     private var tabContent: some View {
         Group {
-            if snapshot.otherZoneItems.isEmpty {
-                ownSection
-            } else if snapshot.edge.isVertical {
+            if snapshot.edge.isVertical {
                 VStack(spacing: 4) {
-                    if !snapshot.items.isEmpty {
-                        ownSection
-                        Divider().frame(height: 1)
-                    }
-                    otherTabs.frame(height: otherExtent)
+                    if snapshot.showsClock { clock.frame(maxWidth: .infinity, alignment: .trailing) }
+                    tabsArea
                 }
             } else {
-                HStack(spacing: 4) {
-                    if !snapshot.items.isEmpty {
-                        ownSection
-                        Divider().frame(width: 1, height: 16)
-                    }
-                    otherTabs.frame(width: otherExtent)
+                HStack(spacing: snapshot.showsClock ? 6 : 0) {
+                    tabsArea
+                    if snapshot.showsClock { clock }
                 }
             }
         }
@@ -541,8 +550,52 @@ struct ZoneTabStripView: View {
                alignment: snapshot.edge.isVertical ? .bottom : .trailing)
     }
 
-    private var otherExtent: CGFloat {
-        let available = max(0, (snapshot.edge.isVertical ? snapshot.layout.stripFrame.height : snapshot.layout.stripFrame.width) - 2 * snapshot.layout.tabPadding)
+    private var clock: some View {
+        TimelineView(.everyMinute) { context in
+            ZoneTabClockLabel(date: context.date, stacked: snapshot.edge.isVertical)
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .frame(height: snapshot.edge.isVertical ? 36 : 24)
+                .help(context.date.formatted(date: .complete, time: .omitted))
+        }
+        .fixedSize()
+        .layoutPriority(1)
+    }
+
+    private var tabsArea: some View {
+        GeometryReader { geometry in
+            tabsArea(available: snapshot.edge.isVertical ? geometry.size.height : geometry.size.width)
+        }
+    }
+
+    private func tabsArea(available: CGFloat) -> some View {
+        Group {
+            if snapshot.otherZoneItems.isEmpty {
+                ownSection
+            } else if snapshot.edge.isVertical {
+                VStack(spacing: 4) {
+                    if !snapshot.items.isEmpty {
+                        ownSection
+                        Divider().frame(height: 1)
+                    }
+                    otherTabs.frame(height: otherExtent(available: available))
+                }
+            } else {
+                HStack(spacing: 4) {
+                    if !snapshot.items.isEmpty {
+                        ownSection
+                        Divider().frame(width: 1, height: 16)
+                    }
+                    otherTabs.frame(width: otherExtent(available: available))
+                }
+            }
+        }
+        .frame(width: snapshot.edge.isVertical ? nil : available,
+               height: snapshot.edge.isVertical ? available : nil)
+    }
+
+    private func otherExtent(available: CGFloat) -> CGFloat {
+        let available = max(0, available)
         let tabExtent: CGFloat = snapshot.edge.isVertical ? 24 : (snapshot.showsNames ? 156 : 48)
         let ownReserve = snapshot.items.isEmpty ? 0 : min(tabExtent, max(0, (available - 9) / 2)) + 9
         return min(CGFloat(snapshot.otherZoneItems.count) * (tabExtent + 4) - 4, max(0, available - ownReserve))
@@ -606,7 +659,7 @@ struct ZoneTabStripView: View {
                 if showZoneName { zoneIcon(item) }
                 ZoneTabButton(item: item, showZoneName: showZoneName, showsNames: snapshot.showsNames, focus: focus,
                               destinations: snapshot.moveDestinations, sizeAction: snapshot.sizeActions[item.assignmentID],
-                              performAction: performAction, beginPress: beginPress)
+                              performAction: performAction, configureMenu: configureMenu, beginPress: beginPress)
             }
                 .id(item.assignmentID)
                 .frame(width: snapshot.edge.isVertical ? nil : (snapshot.showsNames ? 156 : (showZoneName ? 48 : 24)), height: 24)
@@ -622,6 +675,55 @@ struct ZoneTabStripView: View {
     }
 }
 
+// Absorb clock clicks without asking the non-activating panel for keyboard focus.
+final class ZoneTabClockField: NSTextField {
+    override var acceptsFirstResponder: Bool { false }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+    override func rightMouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+    override func otherMouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+}
+
+struct ZoneTabClockLabel: NSViewRepresentable {
+    var date: Date
+    var stacked = false
+
+    static func text(for date: Date, stacked: Bool = false,
+                     locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("EEE MMM d")
+        let day = formatter.string(from: date)
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return day + (stacked ? "\n" : "  ") + formatter.string(from: date)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let label = ZoneTabClockField(labelWithString: "")
+        label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setAccessibilityIdentifier("main-stack-clock")
+        return label
+    }
+
+    func updateNSView(_ label: NSTextField, context: Context) {
+        label.maximumNumberOfLines = stacked ? 2 : 1
+        label.usesSingleLineMode = !stacked
+        label.stringValue = Self.text(for: date, stacked: stacked)
+        label.setAccessibilityLabel("Date and time")
+        label.setAccessibilityValue(label.stringValue)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+}
+
 private struct ZoneTabButton: NSViewRepresentable {
     var item: SwitcherItem
     var showZoneName: Bool
@@ -631,6 +733,7 @@ private struct ZoneTabButton: NSViewRepresentable {
     var destinations: [Zone]
     var sizeAction: ZoneTabAction?
     var performAction: (UUID, ZoneTabAction) -> Void
+    var configureMenu: (UUID, NSMenu) -> Void
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
 
     func makeNSView(context: Context) -> ZoneTabNativeButton {
@@ -644,7 +747,7 @@ private struct ZoneTabButton: NSViewRepresentable {
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
         button.alignment = .left
         button.lineBreakMode = .byTruncatingTail
-        button.font = .systemFont(ofSize: 11, weight: .medium)
+        button.font = .systemFont(ofSize: 13, weight: .medium)
         button.imagePosition = .imageLeft
         button.imageScaling = .scaleNone
         return button
@@ -655,11 +758,13 @@ private struct ZoneTabButton: NSViewRepresentable {
     }
 
     func updateNSView(_ button: ZoneTabNativeButton, context: Context) {
+        button.isActiveTab = item.isFocused
         button.assignmentID = item.assignmentID
         button.focus = focus
         button.zoneID = item.zoneID
         button.destinations = destinations
         button.performAction = performAction
+        button.configureMenu = configureMenu
         button.sizeAction = sizeAction
         button.beginPress = beginPress
         let title = item.title.flatMap { $0.isEmpty ? nil : $0 } ?? item.appName
@@ -702,6 +807,7 @@ final class ZoneTabButtonCell: NSButtonCell {
 
 // Commit the exact target at mouse-down; an MRU redraw during mouse-up cannot select its neighbor.
 final class ZoneTabNativeButton: NSButton {
+    var isActiveTab = false
     var sourceIcon: NSImage?
     var assignmentID: UUID?
     var focus: ((UUID) -> Void)?
@@ -709,6 +815,7 @@ final class ZoneTabNativeButton: NSButton {
     var destinations: [Zone] = []
     var sizeAction: ZoneTabAction?
     var performAction: ((UUID, ZoneTabAction) -> Void)?
+    var configureMenu: ((UUID, NSMenu) -> Void)?
     var beginPress: ((UUID, NSEvent, ZoneTabAction?) -> Void)?
     override var acceptsFirstResponder: Bool { false }
     override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
@@ -726,11 +833,21 @@ final class ZoneTabNativeButton: NSButton {
     }
     override func rightMouseDown(with event: NSEvent) {
         NSApp.preventWindowOrdering()
-        guard let window, let menu = menu(for: event) else { return }
-        // A view-attached context menu raises the entire backing frame over its native windows.
-        menu.popUp(positioning: nil, at: window.convertPoint(toScreen: event.locationInWindow), in: nil)
+        guard let window else { return }
+        showContextMenu(at: window.convertPoint(toScreen: event.locationInWindow), inputUptime: event.timestamp)
     }
-    override func menu(for event: NSEvent) -> NSMenu? {
+    func showContextMenu(at point: CGPoint, inputUptime: Double? = nil) {
+        let start = inputUptime ?? ProcessInfo.processInfo.systemUptime
+        guard let menu = makeContextMenu() else { return }
+        if let session = menu.delegate as? TabContextMenuSession {
+            session.openingUptime = start
+            session.record(.menuConstruction, since: start)
+            let visibleFrame = window?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+            session.prepare { session.present(at: point, visibleFrame: visibleFrame) }
+        } else { menu.popUp(positioning: nil, at: point, in: nil) }
+    }
+    override func menu(for event: NSEvent) -> NSMenu? { makeContextMenu() }
+    private func makeContextMenu() -> NSMenu? {
         guard let assignmentID else { return nil }
         let menu = NSMenu()
         for zone in destinations where zone.id != zoneID {
@@ -761,6 +878,7 @@ final class ZoneTabNativeButton: NSButton {
         let close = ZoneTabMenuItem(title: ZoneTabAction.close.title) { performAction?(assignmentID, .close) }
         close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
         menu.addItem(close)
+        configureMenu?(assignmentID, menu)
         return menu
     }
 
@@ -773,6 +891,7 @@ final class ZoneTabNativeButton: NSButton {
 
 // Keep the selected window and action alive even if the tab redraws while the menu is open.
 final class ZoneTabMenuItem: NSMenuItem {
+    var displayedShortcut = ""
     private let actionHandler: () -> Void
 
     init(title: String, actionHandler: @escaping () -> Void) {

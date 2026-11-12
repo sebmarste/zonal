@@ -551,6 +551,7 @@ struct SystemAXFocusAccess: AXFocusAccess {
     }
 
     func focus(_ job: AXFocusJob, isCurrent: () -> Bool) {
+        let logger = Logger(subsystem: "com.sebmarste.zonal", category: "WindowFocus")
         AXThreadAccess.perform(for: job.element) {
             AXUIElementSetMessagingTimeout(job.element, 1)
             let app = AXUIElementCreateApplication(job.pid)
@@ -562,11 +563,14 @@ struct SystemAXFocusAccess: AXFocusAccess {
             guard isCurrent() else { return }
             _ = setAttribute(job.element, kAXMainAttribute as CFString, kCFBooleanTrue)
             guard isCurrent() else { return }
-            guard raise(job.element) == .success else { return }
+            let raised = raise(job.element)
+            logger.info("focus.raise pid=\(job.pid) result=\(raised.rawValue)")
+            guard raised == .success else { return }
             guard isCurrent() else { return }
             _ = setAttribute(job.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             guard isCurrent() else { return }
-            _ = activateFrontWindow(job.pid)
+            let activated = activateFrontWindow(job.pid)
+            logger.info("focus.activate pid=\(job.pid) accepted=\(activated)")
         }
     }
 }
@@ -650,7 +654,7 @@ final class WindowController {
         }
     )
 
-    func focus(_ window: ManagedWindow, completion: (() -> Void)? = nil) {
+    func focus(_ window: ManagedWindow, completion: (@MainActor () -> Void)? = nil) {
         guard let pid = window.identity.processIdentifier else { completion?(); return }
         let token = UUID()
         let delivery = AXFocusCompletion { completion?() }

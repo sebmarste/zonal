@@ -352,7 +352,7 @@ struct ZoneCard: View {
                             .frame(width: 48, alignment: .trailing)
                     }
                 }
-                Text("Zones with the same frame and display share tabs automatically. Choose which windows appear under General → Tabs → Overlapping zone tabs. The main zone’s appearance and border size take priority when it has tabs enabled.")
+                Text("Zones with the same frame and display share tabs automatically. Choose which windows appear under Profiles → Appearance → Overlapping zone tabs. The main zone’s appearance and border size take priority when it has tabs enabled.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("Tabs follow the switcher’s most-recent-first order. Fitted windows share the space beside the tabs.")
@@ -637,6 +637,7 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
     case previousWindowInStack
     case openGlobalSwitcher
     case openZoneSwitcher
+    case openAppCommands
     case undo
     case restore
 
@@ -650,6 +651,7 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
         case .nextWindowInStack: self = .nextWindowInStack
         case .previousWindowInStack: self = .previousWindowInStack
         case .openGlobalSwitcher: self = .openGlobalSwitcher
+        case .openAppCommands: self = .openAppCommands
         case .openZoneSwitcher: self = .openZoneSwitcher
         case .restore: self = .restore
         case .undo: self = .undo
@@ -676,6 +678,8 @@ enum HotkeyCommandKind: String, CaseIterable, Identifiable {
             return .previousWindowInStack
         case .openGlobalSwitcher:
             return .openGlobalSwitcher
+        case .openAppCommands:
+            return .openAppCommands
         case .openZoneSwitcher:
             return .openZoneSwitcher
         }

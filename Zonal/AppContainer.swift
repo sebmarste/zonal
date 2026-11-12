@@ -63,10 +63,20 @@ final class AppContainer: ObservableObject {
     private lazy var zoneTabs = ZoneTabController(
         snapshots: { [weak self] in self?.workspaceState.tabSnapshots() ?? [] },
         focus: { [weak self] id in self?.workspaceState.focusTab(assignmentID: id) },
-        performAction: { [weak self] id, action in self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
+        performAction: { [weak self] id, action in _ = self?.restoreEngine.performTabAction(assignmentID: id, action: action) },
+        configureMenu: { [weak self] id, menu in
+            guard let self else { return }
+            let context = self.workspaceState.currentProfileContext()
+            guard let assignment = context.assignments.first(where: { $0.id == id }),
+                  let window = self.windowRegistry.bestMatch(for: assignment, in: context.windows) else { return }
+            self.appCommands.configure(menu, expectedWindow: window.element, openingWindow: self.windowTracker.focusedWindow?.element,
+                focusWindow: { [weak self] completion in self?.windowController.focus(window, completion: completion) },
+                cancelFocus: { [weak self] in self?.workspaceState.cancelPendingFocus() })
+        },
         prepareDrag: { [weak self] id in self?.workspaceState.tabDragPlan(assignmentID: id) },
         isSuspended: { [weak self] in self?.restoreEngine.isTabPresentationSuspended ?? true }
     )
+    private(set) lazy var appCommands = AppCommandsController()
     lazy var switcher = SwitcherController(workspaceState: workspaceState)
     private lazy var hotZoneOverlay = HotZoneOverlayController()
     private lazy var windowMovementObserver: WindowMovementObserver = {
@@ -157,6 +167,7 @@ final class AppContainer: ObservableObject {
             self?.restoreEngine.updateWindowAssignment(id, zoneID: zone, fitToZone: fit)
         }
         workspaceState.onFocusedWindowChanged = { [weak self] window in
+            self?.appCommands.focusedWindowChanged(window?.element)
             self?.activeWindowOutline.update(window: window)
             self?.hotkeys.refreshCaptureSnapshot()
             self?.zoneTabs.refresh()
@@ -215,7 +226,14 @@ final class AppContainer: ObservableObject {
         }
         hotkeys.start()
         hotkeys.onUserKeyDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
-        windowMovementObserver.onMouseDown = { [weak self] in self?.workspaceState.cancelPendingFocus() }
+        windowMovementObserver.onMouseDown = { [weak self] in
+            self?.appCommands.cancelPreparation()
+            self?.workspaceState.cancelPendingFocus()
+        }
+        appCommands.openFocusedTabMenu = { [weak self] in self?.zoneTabs.openFocusedContextMenu() ?? false }
+        hotkeys.appCommands = appCommands
+        appCommands.onVisibilityChanged = { [weak self] in self?.hotkeys.refreshCaptureSnapshot() }
+        appCommands.onError = { [weak self] in self?.restoreEngine.presentAppCommandFailure($0) }
         hotkeys.onEscape = { [weak self] in self?.zoneTabs.interaction.cancel() ?? false }
         windowMovementObserver.onTabPointerEvent = { [weak self] type, point in self?.zoneTabs.interaction.pointer(type, at: point) ?? false }
         windowMovementObserver.isTabInteractionActive = { [weak self] in self?.zoneTabs.interaction.isActive ?? false }
@@ -252,6 +270,7 @@ final class AppContainer: ObservableObject {
         windowMovementObserver.stop()
         workspaceState.stop()
         activeWindowOutline.stop()
+        appCommands.stop()
         zoneTabs.stop()
         windowController.onPlacementStarted = nil
         windowController.onPlacementSettled = nil
@@ -359,7 +378,8 @@ final class AppContainer: ObservableObject {
         if ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: prior, current: configuration) {
             workspaceState.reconcile()
             let profile = workspaceState.currentProfileContext().profile
-            let reflowZones = prior?.tabEdge != configuration.tabEdge
+            let previousEdge = appliedPresentationProfile.flatMap { prior?.tabAppearance(for: $0).edge }
+            let reflowZones = previousEdge != configuration.tabAppearance(for: profile).edge
                 ? Set(profile.zones.map(\.id))
                 : ZoneReflowPolicy.changedZones(from: appliedPresentationProfile, to: profile)
             for zone in reflowZones {
@@ -367,6 +387,7 @@ final class AppContainer: ObservableObject {
             }
             appliedPresentationProfile = profile
         }
+        zoneTabs.refresh()
         windowManagementRevision &+= 1
         refreshMenuStatus()
     }
@@ -460,7 +481,7 @@ final class AppContainer: ObservableObject {
             windowCount: context.windows.count,
             restoreCounts: store.loadRestoreHistory().prefix(5).map {
                 SupportReport.RestoreCounts(moved: $0.moved, unchanged: $0.unchanged, skipped: $0.skipped, failed: $0.failed)
-            })
+            }) + "\nApp menus: " + appCommands.lastInventory
     }
 
     func detailedDiagnostics() -> String {

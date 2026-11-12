@@ -166,6 +166,7 @@ final class PersistenceStore {
         merge(\.useNativeCommandTabInFullScreen)
         merge(\.behavior.feedbackMode)
         merge(\.behavior.feedbackCorner)
+        merge(\.behavior.showMainStackClock)
         merge(\.behavior.showSwitcherShortcutGuide)
         merge(\.behavior.switcherDisplayScope)
         merge(\.behavior.outlinePulseMode)
@@ -428,32 +429,34 @@ final class PersistenceStore {
 struct ConfigurationRuntimePolicy {
     func requiresWorkspaceReconciliation(previous: ZonalConfiguration?, current: ZonalConfiguration) -> Bool {
         guard let previous else { return true }
-        return previous.tabEdge != current.tabEdge
-            || previous.tabShowsNames != current.tabShowsNames
-            || previous.overlappingZoneTabs != current.overlappingZoneTabs
-            || previous.activeProfileID != current.activeProfileID
+        return previous.activeProfileID != current.activeProfileID
             || previous.excludedBundleIdentifiers != current.excludedBundleIdentifiers
             || previous.windowDefaultZoneRules != current.windowDefaultZoneRules
-            || runtimeProfiles(previous.profiles) != runtimeProfiles(current.profiles)
+            || runtimeProfiles(previous) != runtimeProfiles(current)
     }
 
-    private func runtimeProfiles(_ profiles: [DisplayProfile]) -> [DisplayProfile] {
-        profiles.map { profile in
-            var runtime = profile
-            runtime.name = ""
-            for index in runtime.zones.indices { runtime.zones[index].name = "" }
-            for index in runtime.displayRoles.indices {
-                runtime.displayRoles[index].name = ""
-                runtime.displayRoles[index].descriptor.name = ""
-            }
-            for index in runtime.setupBindings.indices {
-                runtime.setupBindings[index].name = ""
-                for displayIndex in runtime.setupBindings[index].displays.indices {
-                    runtime.setupBindings[index].displays[displayIndex].name = ""
-                }
-            }
-            return runtime
+    private func runtimeProfiles(_ configuration: ZonalConfiguration) -> [DisplayProfile] {
+        configuration.profiles.map { runtimeProfile($0, configuration: configuration) }
+    }
+
+    func runtimeProfile(_ profile: DisplayProfile, configuration: ZonalConfiguration) -> DisplayProfile {
+        var runtime = profile
+        var appearance = configuration.tabAppearance(for: profile)
+        appearance.showsClock = false
+        runtime.tabAppearance = appearance
+        runtime.name = ""
+        for index in runtime.zones.indices { runtime.zones[index].name = "" }
+        for index in runtime.displayRoles.indices {
+            runtime.displayRoles[index].name = ""
+            runtime.displayRoles[index].descriptor.name = ""
         }
+        for index in runtime.setupBindings.indices {
+            runtime.setupBindings[index].name = ""
+            for displayIndex in runtime.setupBindings[index].displays.indices {
+                runtime.setupBindings[index].displays[displayIndex].name = ""
+            }
+        }
+        return runtime
     }
 }
 

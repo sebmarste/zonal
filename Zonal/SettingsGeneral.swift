@@ -32,28 +32,6 @@ extension SettingsView {
             Panel(maxHeight: false) { themeSection }
             Panel(maxHeight: false) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Tabs").font(.headline)
-                    Picker("Tab edge", selection: Binding(get: { configuration.tabEdge },
-                        set: { configuration.tabEdge = $0; persist() })) {
-                        ForEach(ZoneTabEdge.allCases) { Text($0.title).tag($0) }
-                    }
-                    Picker("Tab labels", selection: Binding(get: { configuration.tabShowsNames },
-                        set: { configuration.tabShowsNames = $0; persist() })) {
-                        Text("Icons and full names").tag(true)
-                        Text("Icons only").tag(false)
-                    }
-                    Picker("Overlapping zone tabs", selection: Binding(
-                        get: { configuration.overlappingZoneTabs ?? .zoneShortcuts },
-                        set: { configuration.overlappingZoneTabs = $0; persist() })) {
-                        ForEach(OverlappingZoneTabs.allCases) { Text($0.title).tag($0) }
-                    }
-                    Text("For zones with identical frames on the same display. All windows combines their most-recent-first history; the leading icon follows the active window’s zone.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("Applies to tabs in every zone and display profile.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Panel(maxHeight: false) {
-                VStack(alignment: .leading, spacing: 12) {
                     Text("Notifications").font(.headline)
                     Picker("Show", selection: behaviorBinding(\.feedbackMode)) {
                         ForEach(FeedbackMode.allCases) { Text($0.title).tag($0) }

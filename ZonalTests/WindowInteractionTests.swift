@@ -493,7 +493,8 @@ final class WindowInteractionTests: XCTestCase {
     }
 
     func testWindowInteractionJournalIsBoundedAndPrivacySafe() {
-        var journal = WindowInteractionJournal(limit: 3)
+        var journal = WindowInteractionJournal()
+        journal.limit = 3
         let windowID = LiveWindowID.quartz(processIdentifier: 42, windowNumber: 100)
 
         journal.record(kind: .observing, phase: .began, windowID: windowID)

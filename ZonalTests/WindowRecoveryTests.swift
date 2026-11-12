@@ -224,7 +224,8 @@ final class WindowRecoveryTests: XCTestCase {
         )
         let start = Date(timeIntervalSince1970: 100)
         let externalBindingID = UUID()
-        var readiness = SessionDisplayReadinessState(timeout: 3)
+        var readiness = SessionDisplayReadinessState()
+        readiness.timeout = 3
         readiness.begin(
             expectation: SessionDisplayExpectation(
                 profileID: "workspace",
@@ -253,7 +254,8 @@ final class WindowRecoveryTests: XCTestCase {
             signature: external
         )
         let unlock = Date(timeIntervalSince1970: 10_000)
-        var readiness = SessionDisplayReadinessState(timeout: 3)
+        var readiness = SessionDisplayReadinessState()
+        readiness.timeout = 3
 
         readiness.begin(expectation: expectation, now: unlock)
 

@@ -107,7 +107,7 @@ final class ZoneTabPrototypeRenderingTests: XCTestCase {
             item.isActive = true
             models.append(ZoneTabSnapshot(zoneID: zoneID, edge: .bottom, layout: layout, items: [item],
                 fittedWindowIDs: [.quartz(processIdentifier: ProcessInfo.processInfo.processIdentifier,
-                                          windowNumber: UInt32(native.windowNumber))]))
+                                          windowNumber: UInt32(native.windowNumber))], showsClock: true))
         }
         let controller = ZoneTabController(snapshots: { models }, focus: { _ in }, radiusQuery: { _ in 16 })
         defer { controller.stop(); windows.forEach { $0.close() }; backdrop.close() }
@@ -209,7 +209,7 @@ final class ZoneTabPrototypeRenderingTests: XCTestCase {
             item.isActive = index == 0
             return item
         }
-        return ZoneTabSnapshot(zoneID: .main, edge: edge, layout: layout, items: items)
+        return ZoneTabSnapshot(zoneID: .main, edge: edge, layout: layout, items: items, showsClock: true)
     }
 
     private func render<V: View>(_ view: V, size: CGSize, appearance: NSAppearance.Name) throws -> NSBitmapImageRep {

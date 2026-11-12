@@ -7,13 +7,14 @@ enum LocalAutomationProtocol {
     Zonal local API v2
     Usage: Zonal --automation <command> [argument]
 
-    Read: status, health, windows, zones, debug-state, diagnostics, doctor
+    Read: status, health, windows, zones, debug-state, diagnostics, doctor, app-menus
     Switcher: show-global (All Windows), show-zone (By Zone), next, previous, confirm, cancel
     Windows: focus-previous, focus-zone <zone-id-or-name>, focus-next-in-zone, focus-previous-in-zone
              focus-bundle <bundle-id>, focus-assignment <uuid>, move-focused <zone-id-or-name>
              move-focused-relative <left|right|up|down>
+    Windows: fit-assignment <uuid> (fits that exact managed window to its assigned zone)
     Workspace: rescan, apply-profile <profile-id>, restore, open-settings
-    Performance: switcher-metrics, reset-switcher-metrics
+    Performance: switcher-metrics, reset-switcher-metrics, menu-metrics, reset-menu-metrics
     """
     static let directoryURL = ZonalStoragePaths.current.appendingPathComponent("Automation", isDirectory: true)
     static let socketURL = directoryURL.appendingPathComponent("zonal-v2.sock")
@@ -29,9 +30,12 @@ enum LocalAutomationReadKind: String, Equatable {
 
 enum LocalAutomationCommand: Equatable {
     case read(LocalAutomationReadKind)
+    case appMenus
     case diagnostics
     case doctor
     case switcherMetrics
+    case menuMetrics
+    case resetMenuMetrics
     case resetSwitcherMetrics
     case openSettings
     case showGlobal
@@ -48,6 +52,7 @@ enum LocalAutomationCommand: Equatable {
     case focusZone(String)
     case focusNextInZone
     case focusPreviousInZone
+    case fitAssignment(UUID)
     case focusAssignment(UUID)
     case focusBundle(String)
     case focusPrevious
@@ -61,8 +66,11 @@ enum LocalAutomationCommand: Equatable {
         case "windows": self = .read(.windows)
         case "zones": self = .read(.zones)
         case "debug-state": self = .read(.debugState)
+        case "app-menus": self = .appMenus
         case "diagnostics": self = .diagnostics
         case "doctor": self = .doctor
+        case "menu-metrics": self = .menuMetrics
+        case "reset-menu-metrics": self = .resetMenuMetrics
         case "switcher-metrics": self = .switcherMetrics
         case "reset-switcher-metrics": self = .resetSwitcherMetrics
         case "open-settings": self = .openSettings
@@ -90,6 +98,9 @@ enum LocalAutomationCommand: Equatable {
         case "focus-zone":
             self = arguments.first.flatMap { $0.isEmpty ? nil : $0 }
                 .map(Self.focusZone) ?? .invalid("focus-zone requires a zone ID or unique name")
+        case "fit-assignment":
+            self = arguments.first.flatMap(UUID.init(uuidString:))
+                .map(Self.fitAssignment) ?? .invalid("fit-assignment requires an assignment UUID")
         case "focus-assignment":
             self = arguments.first.flatMap(UUID.init(uuidString:))
                 .map(Self.focusAssignment) ?? .invalid("focus-assignment requires an assignment UUID")
@@ -213,6 +224,7 @@ struct LocalAutomationResult: Codable, Equatable {
     var debugState: LocalAutomationDebugState?
     var healthFindings: [ZonalHealthFinding]?
     var switcherMetrics: [SwitcherLatencySample]?
+    var menuTimings: [MenuTimingSample]?
 
     init(
         state: LocalAutomationExecutionState,
@@ -230,6 +242,7 @@ struct LocalAutomationResult: Codable, Equatable {
         diagnostics: String? = nil,
         debugState: LocalAutomationDebugState? = nil,
         healthFindings: [ZonalHealthFinding]? = nil,
+        menuTimings: [MenuTimingSample]? = nil,
         switcherMetrics: [SwitcherLatencySample]? = nil
     ) {
         self.state = state
@@ -247,6 +260,7 @@ struct LocalAutomationResult: Codable, Equatable {
         self.diagnostics = diagnostics
         self.debugState = debugState
         self.healthFindings = healthFindings
+        self.menuTimings = menuTimings
         self.switcherMetrics = switcherMetrics
     }
 }

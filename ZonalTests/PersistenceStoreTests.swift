@@ -2,6 +2,29 @@ import XCTest
 @testable import Zonal
 
 final class PersistenceStoreTests: XCTestCase {
+    func testClockCheckboxPersistsThroughSettingsMergeAndKeepsConcurrentEdits() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(supportDirectory: directory)
+        store.bootstrap()
+        let baseline = store.loadConfiguration()
+        var draft = baseline
+        draft.behavior.showMainStackClock = true
+        var external = baseline
+        external.theme = .dark
+        XCTAssertTrue(store.saveConfiguration(external))
+        XCTAssertTrue(store.saveConfiguration(store.mergedConfiguration(draft: draft, baseline: baseline)))
+        let saved = store.loadConfiguration(forceReload: true)
+        XCTAssertTrue(saved.behavior.showMainStackClock)
+        XCTAssertEqual(saved.theme, .dark)
+        var profileDraft = saved
+        profileDraft.profiles[0].tabAppearance = saved.tabAppearance(for: saved.profiles[0])
+        profileDraft.profiles[0].tabAppearance?.showsClock = false
+        XCTAssertTrue(store.saveConfiguration(store.mergedConfiguration(draft: profileDraft, baseline: saved)))
+        let reopened = PersistenceStore(supportDirectory: directory).loadConfiguration()
+        XCTAssertFalse(reopened.tabAppearance(for: reopened.profiles[0]).showsClock)
+    }
+
     func testSwitcherHotkeysDefaultAndPersistedDraft() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
