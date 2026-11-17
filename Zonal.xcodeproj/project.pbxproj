@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        C00100000000000000000003 /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = C00200000000000000000003 /* ThirdPartyNotices.txt */; };
+		C00100000000000000000002 /* SystemControlPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00200000000000000000002 /* SystemControlPanels.swift */; };
+		C00100000000000000000001 /* SystemControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00200000000000000000001 /* SystemControls.swift */; };
 		C01100000000000000000001 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01200000000000000000001 /* AppCommands.swift */; };
 		7FAA49BDBD0867042A966965 /* WindowTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7BF1BB9645050DE926886C /* WindowTracker.swift */; };
 		FFD3FF49EAB0559DDD82A8B0 /* SupportReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9203E749717EA35DE8CC3CF9 /* SupportReport.swift */; };
@@ -83,6 +86,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+        C00200000000000000000003 /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ThirdPartyNotices.txt; sourceTree = "<group>"; };
+		C00200000000000000000002 /* SystemControlPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemControlPanels.swift; sourceTree = "<group>"; };
+		C00200000000000000000001 /* SystemControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemControls.swift; sourceTree = "<group>"; };
 		C01200000000000000000001 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		3E7BF1BB9645050DE926886C /* WindowTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTracker.swift; sourceTree = "<group>"; };
 		9203E749717EA35DE8CC3CF9 /* SupportReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportReport.swift; sourceTree = "<group>"; };
@@ -209,6 +215,9 @@
 				B00200000000000000000001 /* ActiveWindowOutlineController.swift */,
 				B00200000000000000000014 /* OutlineWindowServer.swift */,
 				B00200000000000000000016 /* ZoneTabController.swift */,
+				C00200000000000000000003 /* ThirdPartyNotices.txt */,
+                C00200000000000000000001 /* SystemControls.swift */,
+				C00200000000000000000002 /* SystemControlPanels.swift */,
 				B00200000000000000000019 /* ZoneTabFrame.swift */,
 				B00200000000000000000018 /* ZoneTabShelf.swift */,
 				B00200000000000000000002 /* ZonalDoctor.swift */,
@@ -346,7 +355,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A00100000000000000000023 /* Assets.xcassets in Resources */,
+				C00100000000000000000003 /* ThirdPartyNotices.txt in Resources */,
+                A00100000000000000000023 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -383,6 +393,8 @@
 				B00100000000000000000001 /* ActiveWindowOutlineController.swift in Sources */,
 				B00100000000000000000014 /* OutlineWindowServer.swift in Sources */,
 				B00100000000000000000016 /* ZoneTabController.swift in Sources */,
+				C00100000000000000000001 /* SystemControls.swift in Sources */,
+				C00100000000000000000002 /* SystemControlPanels.swift in Sources */,
 				B00100000000000000000019 /* ZoneTabFrame.swift in Sources */,
 				B00100000000000000000018 /* ZoneTabShelf.swift in Sources */,
 				B00100000000000000000002 /* ZonalDoctor.swift in Sources */,

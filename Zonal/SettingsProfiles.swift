@@ -158,7 +158,40 @@ extension SettingsView {
                 Toggle("Show clock in main stack tab bar", isOn: profileTabBinding(index, \.showsClock))
                 Text("Requires Tabs presentation. The clock stays with the main zone’s shared tab bar.")
                     .font(.caption).foregroundStyle(.secondary)
+                Divider()
+                Toggle("System controls in main stack", isOn: profileSystemControlBinding(index, \.isEnabled))
+                Text("Uses the clock area of the main zone’s tab strip. Each profile has its own controls; narrow strips collect them in a menu.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(SystemControlItem.allCases) { item in
+                    Toggle(item.title, isOn: Binding(get: {
+                        configuration.tabAppearance(for: configuration.profiles[index]).systemControls?.items.contains(item) ?? true
+                    }, set: { selected in
+                        var appearance = configuration.tabAppearance(for: configuration.profiles[index])
+                        var controls = appearance.systemControls ?? SystemControlSettings()
+                        controls.items.removeAll { $0 == item }
+                        if selected { controls.items.append(item) }
+                        appearance.systemControls = controls
+                        configuration.profiles[index].tabAppearance = appearance
+                        persist()
+                    }))
+                    .disabled(!(configuration.tabAppearance(for: configuration.profiles[index]).systemControls?.isEnabled ?? false))
+                }
+                Text("Right-click blank tab-strip space or a zone icon for the Zonal menu and native menu bar access. Use Control–F2 (or Fn–Control–F2) directly. Configure auto-hide in macOS System Settings; switching profiles does not change it.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+
+    func profileSystemControlBinding(_ index: Int, _ keyPath: WritableKeyPath<SystemControlSettings, Bool>) -> Binding<Bool> {
+        Binding(get: {
+            (configuration.tabAppearance(for: configuration.profiles[index]).systemControls ?? SystemControlSettings())[keyPath: keyPath]
+        }, set: { value in
+            var appearance = configuration.tabAppearance(for: configuration.profiles[index])
+            var controls = appearance.systemControls ?? SystemControlSettings()
+            controls[keyPath: keyPath] = value
+            appearance.systemControls = controls
+            configuration.profiles[index].tabAppearance = appearance
+            persist()
+        })
     }
 }

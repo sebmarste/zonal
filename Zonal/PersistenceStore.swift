@@ -443,6 +443,7 @@ struct ConfigurationRuntimePolicy {
         var runtime = profile
         var appearance = configuration.tabAppearance(for: profile)
         appearance.showsClock = false
+        appearance.systemControls = nil
         runtime.tabAppearance = appearance
         runtime.name = ""
         for index in runtime.zones.indices { runtime.zones[index].name = "" }

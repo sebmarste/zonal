@@ -80,6 +80,42 @@ Bug fixes, useful regression tests, and documentation improvements are welcome.
 For larger changes, open an issue first to discuss the problem. See
 [contributing](CONTRIBUTING.md) for development, testing, and release details.
 
+## System controls
+
+Open **Settings → Profiles → Appearance → System controls in main stack**.
+Enable Tabs presentation for the main zone, then choose Volume, Bluetooth,
+Network and Battery. The strip uses that order, followed by the clock. Settings
+belong to each profile. The clock toggle remains separate. Narrow or vertical
+strips collect remaining controls under an ellipsis; desktops omit the internal battery.
+
+Right-click blank tab-strip space or a zone icon to open the Zonal menu.
+It also offers **Show macOS Menu Bar**, using macOS’s Control–F2
+menu-focus shortcut (which must be enabled in Keyboard Shortcuts). Configure
+native menu bar auto-hide in macOS; Zonal does not change that global setting.
+Controls open anchored Zonal panels with background refresh while open. Use the
+header gear to open the matching macOS settings. Panels grow and shrink with
+their content; scrolling is reserved for content taller than the screen. Escape,
+another click on the anchor, or clicking outside dismisses them.
+
+Network offers Wi-Fi power and IP copy actions; Volume offers supported
+volume/mute and output switching. Click a disconnected Bluetooth device row to
+connect it; a small trailing disconnect icon disconnects a connected device.
+Blue icon circles indicate connected devices, with inline battery readings when
+available. Battery shows power source, charging status and Low Power Mode.
+Pairing, network authentication and energy-mode changes stay in Settings.
+
+Bluetooth device discovery starts only when its panel opens and may request
+Bluetooth access. Wi-Fi names depend on macOS privacy permissions; connection
+status still works when the name is unavailable. Battery/audio notifications
+update visible indicators immediately, with a 15-second fallback. Bluetooth
+power uses an availability-checked private macOS API. Device battery readings
+are best-effort, matched by address when available; supported earbud/case
+readings appear in the battery tooltip. Unavailable values are omitted.
+Third-party menu-bar items are not supported.
+
+Battery charge uses a solid fill with percentage text inverted over the filled
+area. A bolt appears in the right-hand digit position while charging below 100%.
+
 ## Bugs and privacy
 
 Use **Settings → Troubleshooting → Create Bug Report** to prepare a GitHub issue
@@ -97,3 +133,5 @@ See the [security policy](SECURITY.md) and [code of conduct](CODE_OF_CONDUCT.md)
 ## License
 
 [MIT](LICENSE). Free to use, modify, and share.
+
+The disconnect and Ethernet icons adapt Lucide vectors (ISC); see [third-party notices](Zonal/ThirdPartyNotices.txt).

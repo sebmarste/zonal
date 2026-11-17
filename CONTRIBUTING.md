@@ -177,6 +177,7 @@ Some macOS integration uses dynamically resolved private APIs:
 | SkyLight notifications and transactions | Decoration ordering; fall back to public ordering and polling |
 | SkyLight corner-radius query | Native outline shape; fall back to a 10-point radius |
 | Legacy process activation | Single-window focus; fall back to public Accessibility focus |
+| Bluetooth controller power and device battery selectors | Availability-checked power control and best-effort battery readings; fall back to Settings or omit unavailable values |
 
 These interfaces can change across OS releases and are not an App Store compatibility
 promise. Keep them behind adapters and test unavailable backends. Universal builds

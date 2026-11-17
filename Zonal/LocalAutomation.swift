@@ -7,7 +7,8 @@ enum LocalAutomationProtocol {
     Zonal local API v2
     Usage: Zonal --automation <command> [argument]
 
-    Read: status, health, windows, zones, debug-state, diagnostics, doctor, app-menus
+    Read: status, health, windows, zones, debug-state, diagnostics, doctor, app-menus, system-controls-status
+    System controls: open-system-control <network|volume|battery|bluetooth>
     Switcher: show-global (All Windows), show-zone (By Zone), next, previous, confirm, cancel
     Windows: focus-previous, focus-zone <zone-id-or-name>, focus-next-in-zone, focus-previous-in-zone
              focus-bundle <bundle-id>, focus-assignment <uuid>, move-focused <zone-id-or-name>
@@ -31,6 +32,8 @@ enum LocalAutomationReadKind: String, Equatable {
 enum LocalAutomationCommand: Equatable {
     case read(LocalAutomationReadKind)
     case appMenus
+    case systemControlsStatus
+    case openSystemControl(SystemControlItem)
     case diagnostics
     case doctor
     case switcherMetrics
@@ -66,6 +69,10 @@ enum LocalAutomationCommand: Equatable {
         case "windows": self = .read(.windows)
         case "zones": self = .read(.zones)
         case "debug-state": self = .read(.debugState)
+        case "system-controls-status": self = arguments.isEmpty ? .systemControlsStatus : .invalid("system-controls-status takes no arguments")
+        case "open-system-control":
+            self = arguments.count == 1 ? SystemControlItem(rawValue: arguments[0]).map(Self.openSystemControl)
+                ?? .invalid("Unknown system control") : .invalid("open-system-control requires network, volume, battery or bluetooth")
         case "app-menus": self = .appMenus
         case "diagnostics": self = .diagnostics
         case "doctor": self = .doctor

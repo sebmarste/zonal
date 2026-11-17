@@ -290,6 +290,7 @@ struct ProfileTabAppearance: Codable, Equatable {
     var showsNames: Bool
     var overlappingTabs: OverlappingZoneTabs
     var showsClock: Bool
+    var systemControls: SystemControlSettings? = nil
 }
 
 struct DisplayProfile: Codable, Equatable, Identifiable {
