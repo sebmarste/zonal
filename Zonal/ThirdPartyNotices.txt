@@ -1,5 +1,6 @@
 Lucide Icons — adapted unlink-2 and ethernet-port vectors
 https://lucide.dev
+https://github.com/lucide-icons/lucide/blob/main/LICENSE
 
 ISC License
 

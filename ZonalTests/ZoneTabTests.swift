@@ -121,6 +121,13 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertEqual(above.insetBy(dx: 40, dy: 40).minY, bottom.maxY + 8)
         let small = CGRect(x: 0, y: 0, width: 480, height: 300)
         XCTAssertTrue(small.contains(SystemControlPanelGeometry.frame(anchor: .zero, surfaceSize: size, visible: small)))
+        for anchor in [top, bottom, CGRect(x: -800, y: 500, width: 28, height: 24)] {
+            let tall = CGSize(width: 360, height: display.height - 80)
+            let frame = SystemControlPanelGeometry.frame(anchor: anchor, surfaceSize: tall, visible: display)
+            XCTAssertTrue(display.contains(frame))
+            XCTAssertFalse(frame.insetBy(dx: 40, dy: 40).intersects(anchor), "A long list must scroll before covering its button")
+            XCTAssertEqual(frame.height - 80, SystemControlPanelGeometry.maximumSurfaceHeight(anchor: anchor, visible: display))
+        }
         XCTAssertEqual(LocalAutomationCommand(name: "system-controls-status", arguments: []), .systemControlsStatus)
         XCTAssertEqual(LocalAutomationCommand(name: "open-system-control", arguments: ["bluetooth"]), .openSystemControl(.bluetooth))
         if case .invalid = LocalAutomationCommand(name: "open-system-control", arguments: []) {} else { XCTFail("Require an explicit control") }
@@ -133,6 +140,35 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertFalse(target.matchesIdentity(of: .init(id: 11, name: "Headphones", uid: "stable-uid")))
         XCTAssertFalse(SystemAudioOutput(id: 10, name: "Headphones").matchesIdentity(of: target))
         XCTAssertFalse(SystemAudioOutput(id: 10, name: "Headphones", uid: "").matchesIdentity(of: .init(id: 10, name: "Headphones", uid: "")))
+    }
+
+    func testSystemControlPanelRequestsDistinguishAnchorClicksFromExplicitOpens() {
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: nil, selected: .network), .dismiss, "An overflow anchor dismisses after changing its selected control")
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: .network, selected: .network), .unchanged, "Opening an already-open control is idempotent")
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: .bluetooth, selected: .network), .open)
+        for state in [(false, true, true), (true, false, true), (true, true, false)] {
+            XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: state.0, sameAnchor: state.1, sameItems: state.2,
+                requested: nil, selected: .network), .open)
+        }
+    }
+
+    func testVolumeChangesPreserveChannelBalance() throws {
+        let levels = try XCTUnwrap(SystemAudio.balancedVolumes([0.6, 0.4], setting: 0.9))
+        XCTAssertEqual(levels[0], 0.9, accuracy: 0.0001)
+        XCTAssertEqual(levels[1], 0.6, accuracy: 0.0001)
+        XCTAssertEqual(levels[0] / levels[1], 1.5, accuracy: 0.0001)
+        XCTAssertEqual(SystemAudio.balancedVolumes([0, 0.8], setting: 0.2), [0, 0.2])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.8, 0], setting: 1), [1, 0])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.6, 0.4], setting: 0), [0, 0])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0, 0], setting: 0.4), [0.4, 0.4])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.2], setting: 2), [1])
+        XCTAssertNil(SystemAudio.balancedVolumes([], setting: 0.4))
+        XCTAssertNil(SystemAudio.balancedVolumes([.nan, 0.4], setting: 0.4))
+        XCTAssertNil(SystemAudio.balancedVolumes([0.6, 0.4], setting: .infinity))
+        XCTAssertEqual(SystemAudio.balancedVolumes([Float.leastNonzeroMagnitude, 0], setting: 1), [1, 0])
     }
 
     func testBatteryDistinguishesExternalPowerAndChargedStates() {
@@ -347,6 +383,30 @@ final class ZoneTabTests: XCTestCase {
                 XCTAssertNil(controller.panel)
             }
         }
+    }
+
+    func testLiveOverflowAnchorDismissesAfterSelectionAndAutomationKeepsPanelOpen() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else { throw XCTSkip("Opt-in overflow dismissal fixture") }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let state = Self.systemPanelSample
+        let model = SystemControlPanelModel(read: { _ in state }, perform: { _ in nil })
+        let controller = SystemControlPanels(model: model)
+        defer { controller.close() }
+        let items = SystemControlItem.allCases
+        let anchor = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 20, width: 28, height: 20)
+        controller.toggle(items: items, anchor: anchor)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(try XCTUnwrap(controller.panel).isVisible)
+        model.selected = .network
+        controller.toggle(items: items, anchor: anchor)
+        XCTAssertNil(controller.panel)
+        controller.toggle(items: items, selected: .network, anchor: anchor)
+        try await Task.sleep(for: .milliseconds(150))
+        let panel = try XCTUnwrap(controller.panel)
+        controller.toggle(items: items, selected: .network, anchor: anchor)
+        XCTAssertTrue(controller.panel === panel)
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(model.selected, .network)
     }
 
     func testLiveSystemPanelResizesAsContentChangesWithoutReopening() async throws {

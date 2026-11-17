@@ -153,16 +153,27 @@ enum SystemAudio {
             .filter { AudioObjectHasProperty(device, [$0]) }
     }
 
-    static func volume(_ device: AudioDeviceID) -> Float? {
+    private static func volumeValues(_ device: AudioDeviceID, properties: [AudioObjectPropertyAddress]) -> [Float]? {
         var values: [Float] = []
-        for var property in volumeProperties(device) {
+        for var property in properties {
             var value: Float32 = 0
             var size = UInt32(MemoryLayout.size(ofValue: value))
-            if AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite {
-                values.append(min(1, max(0, value)))
-            }
+            guard AudioObjectGetPropertyData(device, &property, 0, nil, &size, &value) == noErr, value.isFinite else { return nil }
+            values.append(min(1, max(0, value)))
         }
-        return values.isEmpty ? nil : values.reduce(0, +) / Float(values.count)
+        return values.isEmpty ? nil : values
+    }
+
+    static func volume(_ device: AudioDeviceID) -> Float? {
+        volumeValues(device, properties: volumeProperties(device))?.max()
+    }
+
+    static func balancedVolumes(_ values: [Float], setting value: Float) -> [Float]? {
+        guard value.isFinite, !values.isEmpty, values.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { return nil }
+        let target = min(1, max(0, value))
+        let peak = values.max()!
+        // At silence the hardware exposes no channel ratio; use equal levels until a balance is available.
+        return values.map { peak > 0 ? ($0 / peak) * target : target }
     }
 
     static func canSetVolume(_ device: AudioDeviceID) -> Bool {
@@ -176,9 +187,13 @@ enum SystemAudio {
 
     static func setVolume(_ value: Float, device: AudioDeviceID) -> Bool {
         guard value.isFinite, output == device, canSetVolume(device) else { return false }
-        var value = min(1, max(0, value))
+        let properties = volumeProperties(device)
+        guard let current = volumeValues(device, properties: properties),
+              let values = balancedVolumes(current, setting: value) else { return false }
         var success = true
-        for var property in volumeProperties(device) {
+        for index in properties.indices {
+            var property = properties[index]
+            var value = values[index]
             if AudioObjectSetPropertyData(device, &property, 0, nil, UInt32(MemoryLayout.size(ofValue: value)), &value) != noErr { success = false }
         }
         return success
@@ -483,7 +498,7 @@ final class SystemControlNativeButton: NSButton {
         NSApp.preventWindowOrdering()
         guard let window, !items.isEmpty, selected.map({ items.contains($0) }) ?? true else { return false }
         let anchor = window.convertToScreen(convert(bounds, to: nil))
-        SystemControlPanels.shared.toggle(items: items, selected: selected ?? items[0], anchor: anchor)
+        SystemControlPanels.shared.toggle(items: items, selected: selected, anchor: anchor)
         return true
     }
     override func mouseDown(with event: NSEvent) { _ = openPanel() }

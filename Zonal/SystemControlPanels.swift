@@ -307,7 +307,7 @@ enum SystemBluetoothPower {
         typealias Setter = @convention(c) (Int32) -> Void
         unsafeBitCast(symbol, to: Setter.self)(enabled ? 1 : 0)
         for _ in 0..<30 {
-            if state(controller) == enabled { return nil }
+            if let current = IOBluetoothHostController.default(), state(current) == enabled { return nil }
             Thread.sleep(forTimeInterval: 0.1)
         }
         return "macOS hasn’t confirmed the Bluetooth power change. Check Bluetooth Settings."
@@ -427,12 +427,30 @@ final class SystemControlPanelModel: ObservableObject {
     }
 }
 
+enum SystemControlPanelPresentation: Equatable {
+    case open, dismiss, unchanged
+
+    static func action(isOpen: Bool, sameAnchor: Bool, sameItems: Bool,
+                       requested: SystemControlItem?, selected: SystemControlItem) -> Self {
+        guard isOpen && sameAnchor && sameItems else { return .open }
+        guard let requested else { return .dismiss }
+        return requested == selected ? .unchanged : .open
+    }
+}
+
 struct SystemControlPanelGeometry {
     static let outset: CGFloat = 40
+    static func maximumSurfaceHeight(anchor: CGRect, visible: CGRect) -> CGFloat {
+        let below = anchor.minY - 8 - outset - visible.minY
+        let above = visible.maxY - anchor.maxY - 8 - outset
+        return max(1, min(visible.height - outset * 2, max(below, above)))
+    }
+
     static func frame(anchor: CGRect, surfaceSize: CGSize, visible: CGRect) -> CGRect {
+        let height = min(surfaceSize.height, maximumSurfaceHeight(anchor: anchor, visible: visible))
         let size = CGSize(width: min(visible.width, surfaceSize.width + outset * 2),
-                          height: min(visible.height, surfaceSize.height + outset * 2))
-        let below = anchor.minY - 8 - surfaceSize.height - outset
+                          height: min(visible.height, height + outset * 2))
+        let below = anchor.minY - 8 - height - outset
         let preferredY = below >= visible.minY ? below : anchor.maxY + 8 - outset
         return CGRect(x: min(max(visible.minX, anchor.maxX - surfaceSize.width - outset), visible.maxX - size.width),
                       y: min(max(visible.minY, preferredY), visible.maxY - size.height), width: size.width, height: size.height)
@@ -453,6 +471,7 @@ final class SystemControlPanels {
     let model: SystemControlPanelModel
     private(set) var panel: SystemControlPanel?
     private var anchor = CGRect.zero
+    private var presentedItems: [SystemControlItem] = []
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var observers: [NSObjectProtocol] = []
@@ -464,14 +483,20 @@ final class SystemControlPanels {
 
     init(model: SystemControlPanelModel = SystemControlPanelModel()) { self.model = model }
 
-    func toggle(items: [SystemControlItem], selected: SystemControlItem, anchor: CGRect) {
-        if panel?.isVisible == true, self.anchor == anchor, model.selected == selected { close(reason: "anchor-click"); return }
+    func toggle(items: [SystemControlItem], selected: SystemControlItem? = nil, anchor: CGRect) {
+        guard let selection = selected ?? items.first, items.contains(selection) else { return }
+        switch SystemControlPanelPresentation.action(isOpen: panel != nil, sameAnchor: self.anchor == anchor,
+                                                     sameItems: presentedItems == items, requested: selected, selected: model.selected) {
+        case .dismiss: close(reason: "anchor-click"); return
+        case .unchanged: return
+        case .open: break
+        }
         close(reason: "replaced")
-        guard items.contains(selected), let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchor) }) else { return }
-        self.anchor = anchor; model.selected = selected
+        guard let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchor) }) else { return }
+        self.anchor = anchor; presentedItems = items; model.selected = selection
         let width: CGFloat = items.contains(.bluetooth) ? 360 : 320
         let size = CGSize(width: min(width, max(180, screen.visibleFrame.width - 80)),
-                          height: max(100, screen.visibleFrame.height - 80))
+                          height: SystemControlPanelGeometry.maximumSurfaceHeight(anchor: anchor, visible: screen.visibleFrame))
         let panel = SystemControlPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = false
         panel.hidesOnDeactivate = false; panel.becomesKeyOnlyIfNeeded = true
@@ -490,7 +515,7 @@ final class SystemControlPanels {
         panel.setFrame(SystemControlPanelGeometry.frame(anchor: anchor, surfaceSize: size, visible: screen.visibleFrame), display: false)
         lastCloseReason = "none"
         host.layoutSubtreeIfNeeded()
-        Self.logger.info("System panel opened control=\(selected.rawValue, privacy: .public)")
+        Self.logger.info("System panel opened control=\(selection.rawValue, privacy: .public)")
         model.start()
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             MainActor.assumeIsolated { self?.closeIfOutside() }
@@ -543,6 +568,7 @@ final class SystemControlPanels {
         resizeWork?.cancel(); resizeWork = nil
         let closing = panel
         panel = nil
+        presentedItems = []
         if closing != nil {
             lastCloseReason = reason
             Self.logger.info("System panel closed reason=\(reason, privacy: .public)")
