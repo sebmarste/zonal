@@ -58,6 +58,19 @@ extension AppContainer {
         switch LocalAutomationCommand(name: command, arguments: arguments) {
         case .read(let kind):
             return success("\(kind.rawValue.capitalized) read", result: automationReadResult(kind))
+        case .systemControlsStatus:
+            return success("System controls status", result: LocalAutomationResult(state: .read, diagnostics: SystemControlPanels.shared.diagnostic))
+        case .openSystemControl(let item):
+            func buttons(_ view: NSView) -> [SystemControlNativeButton] {
+                if let button = view as? SystemControlNativeButton, button.items.contains(item) { return [button] }
+                return view.subviews.flatMap(buttons)
+            }
+            let targets = NSApp.windows.filter { $0 is ZoneTabPanel && $0.isVisible }
+                .flatMap { $0.contentView.map(buttons) ?? [] }
+            guard targets.count == 1, targets[0].openPanel(selected: item) else {
+                return failure("control_unavailable", "System control missing or ambiguous")
+            }
+            return success("System control panel opened", state: .accepted)
         case .appMenus:
             return success("App menu inventory read", result: LocalAutomationResult(state: .read, diagnostics: appCommands.lastInventory))
         case .diagnostics:

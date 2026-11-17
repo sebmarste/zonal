@@ -101,6 +101,11 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         AppContainer.shared.rescanWindows()
     }
 
+    @objc private func revealNativeMenuBar() {
+        // Wait until NSMenu has dismissed before transferring keyboard focus.
+        DispatchQueue.main.async { NativeMenuBarAccess.reveal() }
+    }
+
     @objc private func quit() {
         AppContainer.shared.quit()
     }
@@ -133,6 +138,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation, NSMenuDelegate
         menu.addItem(actionItem(HotkeyCommand.restore.title, keyEquivalent: "", action: #selector(restoreWindows)))
         menu.addItem(actionItem(HotkeyCommand.undo.title, keyEquivalent: "z", action: #selector(undoLastWindowAction)))
         menu.addItem(.separator())
+        menu.addItem(actionItem("Show macOS Menu Bar", keyEquivalent: "", action: #selector(revealNativeMenuBar)))
         menu.addItem(actionItem("Settings…", keyEquivalent: ",", action: #selector(openSettings)))
         menu.addItem(actionItem("Quit Zonal", keyEquivalent: "q", action: #selector(quit)))
         return menu

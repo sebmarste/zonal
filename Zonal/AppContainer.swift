@@ -189,7 +189,7 @@ final class AppContainer: ObservableObject {
                 self.refreshLaunchAtLoginState()
                 self.refreshMenuStatus()
             } else {
-                self.zoneTabs.stop()
+                self.zoneTabs.stop(reason: "session-inactive")
                 self.activeWindowOutline.stop()
                 self.statusTimer?.invalidate()
                 self.statusTimer = nil
@@ -482,6 +482,10 @@ final class AppContainer: ObservableObject {
             restoreCounts: store.loadRestoreHistory().prefix(5).map {
                 SupportReport.RestoreCounts(moved: $0.moved, unchanged: $0.unchanged, skipped: $0.skipped, failed: $0.failed)
             }) + "\nApp menus: " + appCommands.lastInventory
+                + "\nTab session gate: suspended=\(restoreEngine.isTabPresentationSuspended)"
+                + "\nTab snapshots: " + workspaceState.tabSnapshotDiagnostic
+                + "\nSystem controls: " + SystemControlPanels.shared.diagnostic
+                + "\n" + zoneTabs.detailedDiagnosticLines().joined(separator: "\n")
     }
 
     func detailedDiagnostics() -> String {

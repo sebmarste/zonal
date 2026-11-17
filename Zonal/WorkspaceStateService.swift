@@ -45,7 +45,8 @@ final class WorkspaceStateService {
     private var lastRegularSpaceContext: WorkspaceContext?
     private var cachedContext: WorkspaceContext?
     private var inventoryWindowIDs = Set<LiveWindowID>()
-    private var focusedIsFullScreen = false
+    private var focusedIsFullScreen: Bool { windowTracker.focusedWindow?.isFullScreen ?? false }
+    private(set) var tabSnapshotDiagnostic = "not-evaluated"
     private var observedFrames: [LiveWindowID: CGRect] = [:]
     var onPersistenceFailure: (() -> Void)?
     var onManualAssignment: ((UUID, ZoneID, Bool) -> Void)?
@@ -74,7 +75,6 @@ final class WorkspaceStateService {
             if let window {
                 self?.markWindowFocused(window)
             } else {
-                self?.focusedIsFullScreen = false
                 self?.onFocusedWindowChanged?(nil)
             }
         }
@@ -112,9 +112,6 @@ final class WorkspaceStateService {
                     self.preparedFocusWindowID = nil
                 }
                 self.observedFrames[window.id] = self.windowRegistry.cgBounds(for: window)
-                if self.windowTracker.focusedWindow?.id == window.id {
-                    self.focusedIsFullScreen = self.windowController.isFullScreen(window)
-                }
             }
             self?.scheduleCustomFrameCapture(for: window)
             self?.onTrackedWindowFrameChanged?(window)
@@ -159,7 +156,6 @@ final class WorkspaceStateService {
         lastRegularSpaceContext = nil
         cachedContext = nil
         inventoryWindowIDs.removeAll()
-        focusedIsFullScreen = false
         observedFrames.removeAll()
         windowTracker.stop()
         windowController.retainWindows([])
@@ -652,16 +648,29 @@ final class WorkspaceStateService {
         return commitAssignment(assignment, customFrame: frame)
     }
 
+    private func recordTabSnapshotState(reason: String, profileID: String = "none", count: Int = 0) {
+        let state = "reason=\(reason) profile=\(profileID) models=\(count) focusedFullScreen=\(focusedIsFullScreen) recovery=\(isSessionRecoveryActive) displayTransition=\(isDisplayTransitionActive)"
+        guard state != tabSnapshotDiagnostic else { return }
+        tabSnapshotDiagnostic = state
+        Self.logger.info("Tab snapshots: \(state, privacy: .public)")
+    }
+
     func tabSnapshots() -> [ZoneTabSnapshot] {
         // Rendering may resume from retained identities before placement recovery finishes.
-        guard !focusedIsFullScreen else { return [] }
+        guard !focusedIsFullScreen else {
+            recordTabSnapshotState(reason: "focused-full-screen"); return []
+        }
         let context = workspaceContext()
-        guard context.profile.zones.contains(where: { $0.windowPresentation == .tabs }),
-              profileManager.matchedProfile(for: context.snapshot) != nil else { return [] }
+        guard profileManager.matchedProfile(for: context.snapshot) != nil else {
+            recordTabSnapshotState(reason: "unmatched-display-profile", profileID: context.profile.id); return []
+        }
+        guard context.profile.zones.contains(where: { $0.windowPresentation == .tabs }) else {
+            recordTabSnapshotState(reason: "tabs-disabled", profileID: context.profile.id); return []
+        }
         let assignmentMap = assignmentsByWindowID(context: context)
         let state = store.loadZoneStackState()
         let focused = focusedAssignmentID(context: context, assignmentByWindowID: assignmentMap)
-        return context.profile.zones.compactMap { zone in
+        let snapshots: [ZoneTabSnapshot] = context.profile.zones.compactMap { zone in
             guard zone.windowPresentation == .tabs,
                   tabOwner(for: zone, context: context)?.id == zone.id,
                   let display = display(for: zone, context: context) else { return nil }
@@ -724,6 +733,7 @@ final class WorkspaceStateService {
                 hasFittedWindows: !fittedWindowIDs.isEmpty, otherZoneItems: otherItems, stackItems: stackItems,
                 fittedWindowIDs: fittedWindowIDs,
                 showsClock: appearance.showsClock && members.contains { $0.id == context.profile.mainZoneID },
+                systemControls: members.contains { $0.id == context.profile.mainZoneID } ? appearance.systemControls : nil,
                 moveDestinations: context.profile.zones.filter { self.display(for: $0, context: context) != nil },
                 sizeActions: Dictionary(uniqueKeysWithValues: context.assignments.compactMap { assignment in
                     guard stackItems.contains(where: { $0.assignmentID == assignment.id }) else { return nil }
@@ -732,6 +742,9 @@ final class WorkspaceStateService {
                         ? nil : (assignment.id, ZoneTabAction.restoreCustom)
                 }))
         }
+        recordTabSnapshotState(reason: snapshots.isEmpty ? "no-eligible-windows" : "ready",
+                               profileID: context.profile.id, count: snapshots.count)
+        return snapshots
     }
 
     private func tabOwner(for zone: Zone, context: WorkspaceContext) -> Zone? {
@@ -1213,7 +1226,6 @@ final class WorkspaceStateService {
     private func markWindowFocused(_ rawWindow: ManagedWindow) {
         Self.logger.info("handoff.stage=observedFocus window=\(rawWindow.id) uptime=\(ProcessInfo.processInfo.systemUptime)")
         onFocusedWindowChanged?(rawWindow)
-        focusedIsFullScreen = windowController.isFullScreen(rawWindow)
         // Inventory/display callbacks own discovery. Exact known focus needs only history projection.
         if !KnownWindowFocusPolicy.canSkipReconciliation(identity: rawWindow.identity,
                 cached: cachedContext?.windows ?? [], current: windowTracker.currentSpaceWindows,

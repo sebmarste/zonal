@@ -5,6 +5,864 @@ import XCTest
 
 @MainActor
 final class ZoneTabTests: XCTestCase {
+    func testTabStripBackgroundMenuCoversBlankSpaceAndZoneIconButNotControls() throws {
+        for edge in ZoneTabEdge.allCases {
+            let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: 800, height: 500), edge: edge, style: .shelf)
+            let item = switcherItem(assignmentID: UUID(), windowID: 1, zoneID: .main)
+            let model = ZoneTabSnapshot(zoneID: .main, edge: edge, layout: layout, items: [item])
+            let panel = try XCTUnwrap(ZoneTabController.makePanel() as? ZoneTabPanel)
+            panel.isReleasedWhenClosed = false
+            defer { panel.close() }
+            let menu = NSMenu(title: "Zonal")
+            var menuRequests = 0
+            panel.makeBackgroundMenu = { menuRequests += 1; return menu }
+            let host = ZoneTabHostingView(rootView: ZoneTabStripView(snapshot: model, focus: { _ in }))
+            host.sizingOptions = []
+            panel.contentView = host
+            panel.setFrame(CGRect(origin: .zero, size: model.panelFrame().size), display: false)
+            host.layoutSubtreeIfNeeded()
+            host.displayIfNeeded()
+            let footprint = model.panelFrame()
+            let strip = layout.stripFrame.offsetBy(dx: -footprint.minX, dy: -footprint.minY)
+            // A point in strip padding cannot belong to a window or system control.
+            let blank = CGPoint(x: strip.minX + 1, y: strip.midY)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: .zero,
+                modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1))
+            let hit = try XCTUnwrap(host.hitTest(host.superview?.convert(blank, from: host) ?? blank))
+            XCTAssertTrue(hit is ZoneTabInputView)
+            XCTAssertTrue(hit.shouldDelayWindowOrdering(for: event))
+            XCTAssertTrue(panel.backgroundMenu(at: host.convert(blank, to: nil)) === menu)
+            // The own-zone icon is at the leading end, ahead of the first window tab.
+            let icon = CGPoint(x: strip.minX + layout.tabPadding + (edge.isVertical ? 50 : 12),
+                               y: edge.isVertical ? strip.minY + layout.tabPadding + 12 : strip.midY)
+            XCTAssertTrue(panel.backgroundMenu(at: host.convert(icon, to: nil)) === menu)
+            XCTAssertTrue(host.hitTest(host.superview?.convert(icon, from: host) ?? icon) is ZoneTabInputView)
+            XCTAssertNil(panel.backgroundMenu(at: host.convert(.zero, to: nil)), "Transparent effect outset must not open menus")
+            func tabButtons(_ view: NSView) -> [ZoneTabNativeButton] {
+                if let button = view as? ZoneTabNativeButton { return [button] }
+                return view.subviews.flatMap(tabButtons)
+            }
+            let tab = try XCTUnwrap(tabButtons(host).first)
+            let tabCenter = CGPoint(x: tab.bounds.midX, y: tab.bounds.midY)
+            XCTAssertNil(panel.backgroundMenu(at: tab.convert(tabCenter, to: nil)))
+            var withClock = model
+            withClock.showsClock = true
+            host.rootView = ZoneTabStripView(snapshot: withClock, focus: { _ in })
+            host.layoutSubtreeIfNeeded()
+            func clocks(_ view: NSView) -> [ZoneTabClockField] {
+                if let field = view as? ZoneTabClockField { return [field] }
+                return view.subviews.flatMap(clocks)
+            }
+            let clock = try XCTUnwrap(clocks(host).first)
+            XCTAssertNil(panel.backgroundMenu(at: clock.convert(CGPoint(x: clock.bounds.midX, y: clock.bounds.midY), to: nil)))
+            XCTAssertEqual(menuRequests, 2)
+        }
+    }
+
+    func testSystemControlProfilesRoundTripAndOldAppearanceRemainsOptedOut() throws {
+        let old = Data(#"{"edge":"top","showsNames":true,"overlappingTabs":"zoneShortcuts","showsClock":true}"#.utf8)
+        let appearance = try JSONDecoder().decode(ProfileTabAppearance.self, from: old)
+        XCTAssertNil(appearance.systemControls)
+        var config = ZonalConfiguration.default
+        var enabled = appearance
+        enabled.systemControls = .init(isEnabled: true, items: [.network, .volume])
+        config.profiles[0].tabAppearance = enabled
+        var other = config.profiles[0]
+        other.id = "native-bar-profile"
+        other.tabAppearance = appearance
+        config.profiles.append(other)
+        let saved = try JSONDecoder().decode(ZonalConfiguration.self, from: JSONEncoder().encode(config))
+        XCTAssertEqual(saved, config)
+        XCTAssertNil(saved.profiles[1].tabAppearance?.systemControls)
+        XCTAssertEqual(saved.profiles[0].tabAppearance?.systemControls?.visibleItems(hasBattery: true), [.volume, .network])
+    }
+
+    func testSystemControlOverflowKeepsEverySelectedItemAndHidesDesktopBattery() {
+        let settings = SystemControlSettings(isEnabled: true, items: [.bluetooth, .volume, .network, .battery, .volume])
+        let desktop = settings.visibleItems(hasBattery: false)
+        XCTAssertEqual(desktop, [.volume, .bluetooth, .network])
+        XCTAssertTrue(SystemControlSettings().visibleItems(hasBattery: true).isEmpty)
+        for width: CGFloat in [0, 24, 52, 78, 130, 1000, .nan, .infinity] {
+            let layout = SystemControlLayout(items: desktop, availableWidth: width, vertical: false)
+            XCTAssertEqual(layout.direct + layout.overflow, desktop)
+            XCTAssertLessThanOrEqual(layout.direct.count, 4)
+        }
+        XCTAssertEqual(SystemControlLayout(items: desktop, availableWidth: 62, vertical: false).direct, [.volume])
+        let vertical = SystemControlLayout(items: desktop, availableWidth: 500, vertical: true)
+        XCTAssertTrue(vertical.direct.isEmpty)
+        XCTAssertEqual(vertical.overflow, desktop)
+    }
+
+    func testSystemControlsUseActualWidthsAndNeedNoRedundantZonalButton() {
+        let items = SystemControlItem.allCases
+        XCTAssertEqual(items, [.volume, .bluetooth, .network, .battery])
+        let roomy = SystemControlLayout(items: items, availableWidth: 200, vertical: false)
+        XCTAssertEqual(roomy.direct, items)
+        XCTAssertTrue(roomy.overflow.isEmpty)
+        let narrow = SystemControlLayout(items: items, availableWidth: 90, vertical: false)
+        XCTAssertEqual(narrow.direct, [.volume, .bluetooth])
+        XCTAssertEqual(narrow.overflow, [.network, .battery])
+        XCTAssertGreaterThan(SystemControlItem.battery.controlWidth, SystemControlItem.network.controlWidth)
+        let empty = SystemControlLayout(items: [], availableWidth: 200, vertical: false)
+        XCTAssertTrue(empty.direct.isEmpty && empty.overflow.isEmpty)
+    }
+
+    func testSystemPanelPlacementKeepsFullFootprintOnDisplay() {
+        let display = CGRect(x: -1600, y: 0, width: 1600, height: 1000)
+        let size = CGSize(width: 320, height: 430)
+        let top = CGRect(x: -800, y: 950, width: 28, height: 24)
+        let below = SystemControlPanelGeometry.frame(anchor: top, surfaceSize: size, visible: display)
+        XCTAssertTrue(display.contains(below))
+        XCTAssertEqual(below.insetBy(dx: 40, dy: 40).maxY, top.minY - 8)
+        let bottom = CGRect(x: -1590, y: 20, width: 28, height: 24)
+        let above = SystemControlPanelGeometry.frame(anchor: bottom, surfaceSize: size, visible: display)
+        XCTAssertTrue(display.contains(above))
+        XCTAssertEqual(above.insetBy(dx: 40, dy: 40).minY, bottom.maxY + 8)
+        let small = CGRect(x: 0, y: 0, width: 480, height: 300)
+        XCTAssertTrue(small.contains(SystemControlPanelGeometry.frame(anchor: .zero, surfaceSize: size, visible: small)))
+        for anchor in [top, bottom, CGRect(x: -800, y: 500, width: 28, height: 24)] {
+            let tall = CGSize(width: 360, height: display.height - 80)
+            let frame = SystemControlPanelGeometry.frame(anchor: anchor, surfaceSize: tall, visible: display)
+            XCTAssertTrue(display.contains(frame))
+            XCTAssertFalse(frame.insetBy(dx: 40, dy: 40).intersects(anchor), "A long list must scroll before covering its button")
+            XCTAssertEqual(frame.height - 80, SystemControlPanelGeometry.maximumSurfaceHeight(anchor: anchor, visible: display))
+        }
+        XCTAssertEqual(LocalAutomationCommand(name: "system-controls-status", arguments: []), .systemControlsStatus)
+        XCTAssertEqual(LocalAutomationCommand(name: "open-system-control", arguments: ["bluetooth"]), .openSystemControl(.bluetooth))
+        if case .invalid = LocalAutomationCommand(name: "open-system-control", arguments: []) {} else { XCTFail("Require an explicit control") }
+    }
+
+    func testAudioIdentityRejectsReusedDeviceIDsAndMissingUIDs() {
+        let target = SystemAudioOutput(id: 10, name: "Headphones", uid: "stable-uid")
+        XCTAssertTrue(target.matchesIdentity(of: target))
+        XCTAssertFalse(target.matchesIdentity(of: .init(id: 10, name: "Headphones", uid: "different-uid")))
+        XCTAssertFalse(target.matchesIdentity(of: .init(id: 11, name: "Headphones", uid: "stable-uid")))
+        XCTAssertFalse(SystemAudioOutput(id: 10, name: "Headphones").matchesIdentity(of: target))
+        XCTAssertFalse(SystemAudioOutput(id: 10, name: "Headphones", uid: "").matchesIdentity(of: .init(id: 10, name: "Headphones", uid: "")))
+    }
+
+    func testSystemControlPanelRequestsDistinguishAnchorClicksFromExplicitOpens() {
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: nil, selected: .network), .dismiss, "An overflow anchor dismisses after changing its selected control")
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: .network, selected: .network), .unchanged, "Opening an already-open control is idempotent")
+        XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: true, sameAnchor: true, sameItems: true,
+            requested: .bluetooth, selected: .network), .open)
+        for state in [(false, true, true), (true, false, true), (true, true, false)] {
+            XCTAssertEqual(SystemControlPanelPresentation.action(isOpen: state.0, sameAnchor: state.1, sameItems: state.2,
+                requested: nil, selected: .network), .open)
+        }
+    }
+
+    func testVolumeChangesPreserveChannelBalance() throws {
+        let levels = try XCTUnwrap(SystemAudio.balancedVolumes([0.6, 0.4], setting: 0.9))
+        XCTAssertEqual(levels[0], 0.9, accuracy: 0.0001)
+        XCTAssertEqual(levels[1], 0.6, accuracy: 0.0001)
+        XCTAssertEqual(levels[0] / levels[1], 1.5, accuracy: 0.0001)
+        XCTAssertEqual(SystemAudio.balancedVolumes([0, 0.8], setting: 0.2), [0, 0.2])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.8, 0], setting: 1), [1, 0])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.6, 0.4], setting: 0), [0, 0])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0, 0], setting: 0.4), [0.4, 0.4])
+        XCTAssertEqual(SystemAudio.balancedVolumes([0.2], setting: 2), [1])
+        XCTAssertNil(SystemAudio.balancedVolumes([], setting: 0.4))
+        XCTAssertNil(SystemAudio.balancedVolumes([.nan, 0.4], setting: 0.4))
+        XCTAssertNil(SystemAudio.balancedVolumes([0.6, 0.4], setting: .infinity))
+        XCTAssertEqual(SystemAudio.balancedVolumes([Float.leastNonzeroMagnitude, 0], setting: 1), [1, 0])
+    }
+
+    func testBatteryDistinguishesExternalPowerAndChargedStates() {
+        XCTAssertEqual(SystemBattery(percent: 70, charging: false, source: "Battery Power").status, "On battery")
+        XCTAssertEqual(SystemBattery(percent: 80, charging: false, source: "AC Power").status, "Plugged in · Not charging")
+        XCTAssertEqual(SystemBattery(percent: 100, charging: false, source: "AC Power").status, "Fully charged")
+        XCTAssertEqual(SystemBattery(percent: 95, charging: false, source: "AC Power", fullyCharged: true).status, "Fully charged")
+        XCTAssertEqual(SystemBattery(percent: 80, charging: true, source: "AC Power").status, "Charging")
+        XCTAssertEqual(SystemBattery(percent: 80, charging: false).status, "Power source unavailable")
+    }
+
+    func testCustomPanelModelOpensCachedAndRefreshesBluetoothWithoutMainThreadWork() async throws {
+        let probe = SystemPanelHardwareProbe()
+        let model = SystemControlPanelModel(read: probe.read, perform: probe.perform)
+        model.snapshot.network.connection = "Cached connection"
+        model.start()
+        defer { model.stop() }
+        XCTAssertEqual(model.snapshot.network.connection, "Cached connection")
+        XCTAssertTrue(model.refreshing)
+        model.selected = .bluetooth
+        model.refresh()
+        for _ in 0..<100 where model.refreshing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.refreshing)
+        XCTAssertEqual(probe.reads, [.network, .bluetooth])
+        XCTAssertEqual(model.loadedKinds, [.network, .bluetooth])
+        XCTAssertTrue(model.snapshot.outputs.isEmpty, "A Bluetooth read must not populate unrelated audio data")
+        XCTAssertFalse(probe.usedMainThread)
+        XCTAssertEqual(model.snapshot.network.connection, "Ethernet connected")
+    }
+
+    func testPanelRefreshKeepsOtherCachedControlsAndOnlyLoadsSelectedKind() async throws {
+        let probe = SystemPanelHardwareProbe()
+        let model = SystemControlPanelModel(read: probe.read, perform: probe.perform)
+        model.snapshot = Self.systemPanelSample
+        model.volumeDraft = 0.45
+        for item in [SystemControlItem.battery, .volume, .network, .bluetooth] {
+            let before = model.snapshot
+            model.selected = item
+            model.refresh()
+            for _ in 0..<100 where model.refreshing { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(model.refreshing)
+            if item != .network { XCTAssertEqual(model.snapshot.network, before.network) }
+            if item != .volume {
+                XCTAssertEqual(model.snapshot.outputs, before.outputs)
+                XCTAssertEqual(model.snapshot.outputID, before.outputID)
+                XCTAssertEqual(model.snapshot.volume, before.volume)
+            }
+            if item != .battery { XCTAssertEqual(model.snapshot.battery, before.battery) }
+            if item != .bluetooth { XCTAssertEqual(model.snapshot.bluetoothDevices, before.bluetoothDevices) }
+        }
+        XCTAssertEqual(model.snapshot.battery?.percent, 90)
+        XCTAssertEqual(model.snapshot.volume, 0.6)
+        XCTAssertEqual(model.volumeDraft, Double(Float(0.6)))
+        XCTAssertEqual(model.snapshot.bluetoothDevices.first?.id, "mouse")
+        XCTAssertEqual(probe.reads, [.battery, .volume, .network, .bluetooth])
+        XCTAssertEqual(model.loadedKinds, Set(SystemControlItem.allCases))
+        model.stop()
+    }
+
+    func testBluetoothSymbolsUseReportedDeviceClassAndFallbackForUnknownDevices() throws {
+        for (major, minor, symbol): (UInt32, UInt32, String) in [
+            (5, 0x10, "keyboard"), (5, 0x20, "computermouse"), (5, 0x30, "keyboard"),
+            (5, 2, "gamecontroller"), (4, 6, "headphones"), (4, 5, "speaker.wave.2"),
+            (4, 4, "mic"), (2, 0, "iphone"), (1, 3, "laptopcomputer"),
+            (0, 0, "wave.3.right"), (31, 0, "wave.3.right")
+        ] {
+            XCTAssertEqual(SystemBluetoothDevice.symbol(major: major, minor: minor), symbol)
+            XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil))
+        }
+    }
+
+    func testBluetoothBatteryIdentityRejectsConflictingAndAmbiguousReadings() {
+        typealias Reading = SystemBluetoothBatteryReading
+        let address = "AA:BB:CC:DD:EE:01"
+        let other = "aa-bb-cc-dd-ee-02"
+        let exact = Reading(address: "aabbccddee01", name: "Mouse", percent: 0)
+        let otherDevice = Reading(address: other, name: "Mouse", percent: 80)
+        XCTAssertEqual(Reading.percent(in: [exact, otherDevice], address: address, name: "Mouse", uniqueName: false), 0)
+        XCTAssertNil(Reading.percent(in: [otherDevice], address: address, name: "Mouse", uniqueName: true))
+        let unnamed = Reading(address: nil, name: "Mouse", percent: 72)
+        XCTAssertEqual(Reading.percent(in: [unnamed], address: address, name: "Mouse", uniqueName: true), 72)
+        XCTAssertNil(Reading.percent(in: [unnamed], address: address, name: "Mouse", uniqueName: false))
+        XCTAssertNil(Reading.percent(in: [unnamed, unnamed], address: address, name: "Mouse", uniqueName: true))
+        XCTAssertNil(Reading.percent(in: [exact, .init(address: address, name: "Mouse", percent: 10)], address: address, name: "Mouse", uniqueName: true))
+        XCTAssertNil(Reading.percent(in: [unnamed], address: "invalid", name: "Mouse", uniqueName: true))
+        XCTAssertNil(Reading.address("AA:BB:CC:DD:EE:GG"))
+    }
+
+    func testBluetoothBatteryGettersCheckABIAndOmitUnknownPrivateValues() {
+        let device = BluetoothBatteryProbe()
+        XCTAssertEqual(SystemControlHardware.bluetoothPercent(device, selector: "batteryPercentLeft"), 72)
+        XCTAssertNil(SystemControlHardware.bluetoothPercent(device, selector: "batteryPercentRight"), "Do not invoke a getter whose ABI changed")
+        XCTAssertNil(SystemControlHardware.bluetoothPercent(device, selector: "missingBatteryGetter"))
+        XCTAssertNil(SystemControlHardware.bluetoothPercent(device, selector: "batteryPercentSingle"), "Zero is ambiguous in the private getter")
+        device.batteryPercentSingle = 255
+        XCTAssertNil(SystemControlHardware.bluetoothPercent(device, selector: "batteryPercentSingle"))
+        device.batteryPercentSingle = 100
+        XCTAssertEqual(SystemControlHardware.bluetoothPercent(device, selector: "batteryPercentSingle"), 100)
+        let earbuds = SystemBluetoothDevice(id: "earbuds", name: "Earbuds", connected: true, battery: nil,
+                                           batteryLeft: 72, batteryRight: 18, batteryCase: 90)
+        XCTAssertEqual(earbuds.batteryText, "72/18%")
+        XCTAssertEqual(earbuds.batteryLevel, 18)
+        XCTAssertEqual(earbuds.batteryHelp, "Left 72% · Right 18% · Case 90%")
+    }
+
+    func testBluetoothPowerActionShowsPendingStateAndRestoresReadbackOnFailure() async throws {
+        let probe = SystemPanelHardwareProbe(error: "Power change unavailable")
+        let model = SystemControlPanelModel(read: probe.read, perform: probe.perform)
+        model.selected = .bluetooth
+        model.snapshot.bluetoothPower = true
+        model.act(.bluetoothPower(false)); model.act(.bluetoothPower(true))
+        XCTAssertEqual(model.snapshot.bluetoothPower, false)
+        XCTAssertTrue(model.pending)
+        for _ in 0..<100 where model.pending || model.refreshing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(probe.actionCount, 1)
+        XCTAssertEqual(model.snapshot.bluetoothPower, true)
+        XCTAssertEqual(model.error, "Power change unavailable")
+        model.stop()
+    }
+
+    func testCustomPanelActionsDoNotDuplicateAndShowErrors() async throws {
+        let probe = SystemPanelHardwareProbe(error: "Device is unavailable")
+        let model = SystemControlPanelModel(read: probe.read, perform: probe.perform)
+        model.act(.wifi(false)); model.act(.wifi(false))
+        XCTAssertTrue(model.pending)
+        for _ in 0..<100 where model.pending { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(probe.actionCount, 1)
+        XCTAssertEqual(model.error, "Device is unavailable")
+        XCTAssertFalse(probe.usedMainThread)
+        model.stop()
+    }
+
+    func testVolumeChangesCoalesceAndKeepLatestValue() async throws {
+        let probe = SystemPanelHardwareProbe()
+        let model = SystemControlPanelModel(read: probe.read, perform: probe.perform)
+        model.snapshot = Self.systemPanelSample
+        model.setVolume(0.2); model.setVolume(0.5); model.setVolume(0.8)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(probe.lastVolume, 0.8)
+        XCTAssertEqual(probe.actionCount, 1)
+        XCTAssertFalse(probe.usedMainThread)
+        model.stop()
+    }
+
+    private static var systemPanelSample: SystemControlSnapshot {
+        var state = SystemControlSnapshot()
+        state.network = .init(interface: "en7", connection: "Ethernet connected", addresses: ["192.168.1.20", "fe80::20:abcd:ef01:2345%en7"],
+                              wifiPower: true, ssid: "Home network", signal: -52, rate: 866)
+        state.outputs = [.init(id: 1, name: "MacBook Pro Speakers", uid: "builtin", symbol: "laptopcomputer"),
+                         .init(id: 2, name: "Headphones", uid: "headphones", symbol: "headphones"),
+                         .init(id: 3, name: "External Display", uid: "display", symbol: "display"),
+                         .init(id: 4, name: "USB Audio", uid: "usb", symbol: "speaker.wave.2")]
+        state.outputID = 1; state.volume = 0.45; state.canSetVolume = true; state.canSetMute = true
+        state.battery = .init(percent: 82, charging: false, source: "AC Power")
+        state.bluetoothPower = true; state.canSetBluetoothPower = true
+        state.bluetoothDevices = [.init(id: "paired-mouse", name: "Magic Mouse", connected: true, battery: 72, symbol: "computermouse"),
+                                  .init(id: "paired-keyboard", name: "Magic Keyboard", connected: true, battery: 90, symbol: "keyboard"),
+                                  .init(id: "paired-headphones", name: "Headphones", connected: false, symbol: "headphones"),
+                                  .init(id: "paired-speaker", name: "Desk Speaker", connected: false, symbol: "speaker.wave.2"),
+                                  .init(id: "paired-travel", name: "Travel Headphones", connected: false, symbol: "headphones")]
+        return state
+    }
+
+    func testLiveSystemControlPanelDesignAndCompositing() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else { throw XCTSkip("Opt-in custom panel rendering fixture") }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let backdrop = NSWindow(contentRect: CGRect(x: screen.visibleFrame.midX - 350, y: screen.visibleFrame.midY - 300, width: 700, height: 650),
+                                styleMask: .borderless, backing: .buffered, defer: false)
+        backdrop.isReleasedWhenClosed = false; backdrop.backgroundColor = .systemOrange; backdrop.orderFrontRegardless()
+        defer { backdrop.close() }
+        let directory = URL(fileURLWithPath: "/private/tmp/zonal-system-panels")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sample = Self.systemPanelSample
+        var many = sample
+        many.bluetoothDevices = (1...80).map { .init(id: "device-\($0)", name: "Bluetooth device \($0)", connected: $0 < 3) }
+        var charging = sample
+        charging.battery = .init(percent: 64, charging: true, source: "AC Power", minutesToFull: 93)
+        var earbuds = sample
+        earbuds.bluetoothDevices = [.init(id: "earbuds", name: "AirPods", connected: true, battery: nil, symbol: "headphones", batteryLeft: 72, batteryRight: 18, batteryCase: 90)]
+        let cases = SystemControlItem.allCases.map { ($0.rawValue, [$0], $0, sample) } + [
+            ("bluetooth-many", [.bluetooth], .bluetooth, many),
+            ("overflow", SystemControlItem.allCases, .bluetooth, sample),
+            ("battery-charging", [.battery], .battery, charging),
+            ("earbuds", [.bluetooth], .bluetooth, earbuds)
+        ]
+        func overflowingScrollViews(_ view: NSView) -> [NSScrollView] {
+            let own = (view as? NSScrollView).map { scroll in
+                scroll.documentView.map { $0.bounds.height > scroll.contentSize.height + 1 } == true ? [scroll] : []
+            } ?? []
+            return own + view.subviews.flatMap(overflowingScrollViews)
+        }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            for (name, items, item, state) in cases {
+                let model = SystemControlPanelModel(read: { _ in state }, perform: { _ in nil })
+                model.snapshot = state
+                let controller = SystemControlPanels(model: model)
+                controller.toggle(items: items, selected: item,
+                                  anchor: CGRect(x: screen.visibleFrame.midX + 150, y: screen.visibleFrame.midY + 260, width: 28, height: 24))
+                let panel = try XCTUnwrap(controller.panel)
+                panel.appearance = NSAppearance(named: appearance)
+                XCTAssertFalse(panel.isOpaque); XCTAssertFalse(panel.hasShadow); XCTAssertEqual(panel.backgroundColor, .clear)
+                try await Task.sleep(for: .milliseconds(150))
+                let host = try XCTUnwrap(panel.contentView)
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                XCTAssertLessThan(try XCTUnwrap(bitmap.colorAt(x: 0, y: 0)).alphaComponent, 0.01)
+                XCTAssertEqual(overflowingScrollViews(host).isEmpty, name != "bluetooth-many", "Only long lists should need scrolling: \(name)")
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: directory.appendingPathComponent("\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+                panel.cancelOperation(nil)
+                XCTAssertNil(controller.panel)
+            }
+        }
+    }
+
+    func testLiveOverflowAnchorDismissesAfterSelectionAndAutomationKeepsPanelOpen() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else { throw XCTSkip("Opt-in overflow dismissal fixture") }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let state = Self.systemPanelSample
+        let model = SystemControlPanelModel(read: { _ in state }, perform: { _ in nil })
+        let controller = SystemControlPanels(model: model)
+        defer { controller.close() }
+        let items = SystemControlItem.allCases
+        let anchor = CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 20, width: 28, height: 20)
+        controller.toggle(items: items, anchor: anchor)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(try XCTUnwrap(controller.panel).isVisible)
+        model.selected = .network
+        controller.toggle(items: items, anchor: anchor)
+        XCTAssertNil(controller.panel)
+        controller.toggle(items: items, selected: .network, anchor: anchor)
+        try await Task.sleep(for: .milliseconds(150))
+        let panel = try XCTUnwrap(controller.panel)
+        controller.toggle(items: items, selected: .network, anchor: anchor)
+        XCTAssertTrue(controller.panel === panel)
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(model.selected, .network)
+    }
+
+    func testLiveSystemPanelResizesAsContentChangesWithoutReopening() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else { throw XCTSkip("Opt-in content-sized panel fixture") }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var sample = Self.systemPanelSample
+        sample.bluetoothDevices = Array(sample.bluetoothDevices.prefix(1))
+        let initial = sample
+        let model = SystemControlPanelModel(read: { _ in initial }, perform: { _ in nil })
+        model.snapshot = initial
+        let controller = SystemControlPanels(model: model)
+        controller.toggle(items: [.bluetooth], selected: .bluetooth, anchor: CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 20, width: 28, height: 20))
+        defer { controller.close() }
+        let panel = try XCTUnwrap(controller.panel)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(panel.isVisible)
+        let small = panel.frame.height
+        model.snapshot.bluetoothDevices = Self.systemPanelSample.bluetoothDevices
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(panel.frame.height, small + 80)
+        XCTAssertTrue(screen.visibleFrame.contains(panel.frame))
+        model.snapshot.bluetoothDevices = initial.bluetoothDevices
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(panel.frame.height, small, accuracy: 1)
+        XCTAssertTrue(controller.panel === panel)
+        controller.close()
+        model.snapshot.bluetoothDevices = Self.systemPanelSample.bluetoothDevices
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(panel.isVisible, "A late layout update must not reopen a dismissed panel")
+        XCTAssertNil(controller.panel)
+    }
+
+    func testLiveBluetoothRowConnectsButOnlyDisconnectIconDisconnects() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else { throw XCTSkip("Opt-in Bluetooth hit-target fixture") }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var sample = Self.systemPanelSample
+        sample.bluetoothDevices = [sample.bluetoothDevices[0], sample.bluetoothDevices[2]]
+        let state = sample
+        let probe = SystemPanelHardwareProbe()
+        let model = SystemControlPanelModel(read: { _ in state }, perform: probe.perform)
+        model.snapshot = state
+        let controller = SystemControlPanels(model: model)
+        controller.toggle(items: [.bluetooth], selected: .bluetooth, anchor: CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.maxY - 20, width: 28, height: 20))
+        defer { controller.close() }
+        let panel = try XCTUnwrap(controller.panel)
+        try await Task.sleep(for: .milliseconds(200))
+        func click(x: CGFloat, top: CGFloat) throws {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: CGPoint(x: x, y: panel.frame.height - top),
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                    context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                NSApp.sendEvent(event)
+            }
+        }
+        func settled() async throws {
+            try await Task.sleep(for: .milliseconds(80))
+            for _ in 0..<100 where model.pending || model.refreshing { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        // Surface outset 40 + inset 14 + header 36 + gap 12 + content inset 1 + half-row 21.
+        try click(x: 150, top: 124); try click(x: 78, top: 124)
+        XCTAssertEqual(probe.actionCount, 0, "Connected names/icons stay passive")
+        try click(x: 220, top: 174); try click(x: 220, top: 174)
+        try await settled()
+        XCTAssertEqual(probe.actionCount, 1, "The disconnected row connects once while pending")
+        XCTAssertEqual(probe.lastBluetoothConnectedState, false)
+        try click(x: 78, top: 174)
+        try await settled()
+        XCTAssertEqual(probe.actionCount, 2, "The disconnected icon also connects")
+        try click(x: panel.frame.width - 79, top: 124)
+        try await settled()
+        XCTAssertEqual(probe.actionCount, 3)
+        XCTAssertEqual(probe.lastBluetoothConnectedState, true, "Only the trailing icon disconnects")
+    }
+
+    func testSystemControlButtonsAlignFractionalFramesToBackingPixels() throws {
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 200, height: 40),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let parent = NSView(frame: CGRect(x: 0.5, y: 0.5, width: 180, height: 36))
+        try XCTUnwrap(window.contentView).addSubview(parent)
+        let button = SystemControlNativeButton(frame: CGRect(x: 12.25, y: 5.25, width: 34, height: 24))
+        parent.addSubview(button)
+        for origin in [button.frame.origin, CGPoint(x: 18.75, y: 6.75)] {
+            button.setFrameOrigin(origin)
+            let backing = window.convertToBacking(button.convert(button.bounds, to: nil))
+            XCTAssertEqual(backing.minX, backing.minX.rounded(), accuracy: 0.001)
+            XCTAssertEqual(backing.minY, backing.minY.rounded(), accuracy: 0.001)
+            XCTAssertEqual(button.frame.size, CGSize(width: 34, height: 24))
+        }
+    }
+
+    func testSystemControlImagesShareTextBaselineAndFitHitTargets() throws {
+        var images: [(NSImage, CGFloat)] = []
+        for name in ["ethernet", "network", "wifi", "speaker.wave.1", "speaker.wave.2", "speaker.wave.3", "speaker.slash", "ellipsis"] {
+            let width = ["ethernet", "network", "wifi"].contains(name) ? SystemControlItem.network.controlWidth
+                : name == "ellipsis" ? 26 : SystemControlItem.volume.controlWidth
+            images.append((try XCTUnwrap(SystemControlImages.symbol(name)), width))
+        }
+        images.append((SystemControlImages.bluetooth, SystemControlItem.bluetooth.controlWidth))
+        images.append((SystemControlImages.disconnect, 28))
+        let outline = try XCTUnwrap(NSImage(systemSymbolName: "battery.0percent", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: SystemControlImages.font.pointSize, weight: .regular, scale: .large)))
+        for percent in [0, 8, 50, 100] {
+            for charging in [false, true] {
+                let image = SystemControlImages.battery(.init(percent: percent, charging: charging))
+                XCTAssertEqual(image.size, CGSize(width: outline.size.width, height: outline.size.height + 2))
+                XCTAssertEqual(image.alignmentRect, outline.alignmentRect.offsetBy(dx: 0, dy: 1))
+                images.append((image, SystemControlItem.battery.controlWidth))
+            }
+        }
+        for (image, width) in images {
+            let cell = SystemControlButtonCell()
+            cell.image = image
+            let rect = cell.imageRect(forBounds: CGRect(x: 0, y: 0, width: width, height: 24))
+            XCTAssertEqual(rect.midX, width / 2)
+            XCTAssertEqual(rect.midY, 12, accuracy: 0.001)
+            XCTAssertGreaterThanOrEqual(rect.minY, 0)
+            XCTAssertLessThanOrEqual(rect.maxY, 24)
+            XCTAssertGreaterThanOrEqual(width - image.size.width, 12, "Keep visible gaps without shrinking click targets")
+            XCTAssertTrue(image.isTemplate)
+            XCTAssertNotNil(image.tiffRepresentation)
+        }
+        if ProcessInfo.processInfo.environment["ZONAL_RENDER_SYSTEM_IMAGES"] == "1" { try renderSystemControlSamples() }
+    }
+
+    func testNetworkGlyphDistinguishesEthernetFromWiFiAndGenericConnections() {
+        XCTAssertEqual(SystemControlMonitor.networkSymbol(connection: "Ethernet connected"), "ethernet")
+        XCTAssertEqual(SystemControlMonitor.networkSymbol(connection: "Wi-Fi connected"), "wifi")
+        XCTAssertEqual(SystemControlMonitor.networkSymbol(connection: "No network connection"), "wifi.slash")
+        XCTAssertEqual(SystemControlMonitor.networkSymbol(connection: "Connected"), "network")
+    }
+
+    func testFullBatteryDoesNotShowChargingBolt() throws {
+        let full = SystemControlImages.battery(.init(percent: 100, charging: false))
+        let chargingFull = SystemControlImages.battery(.init(percent: 100, charging: true))
+        XCTAssertEqual(try XCTUnwrap(full.tiffRepresentation), try XCTUnwrap(chargingFull.tiffRepresentation))
+        let charging = SystemControlImages.battery(.init(percent: 64, charging: true))
+        let idle = SystemControlImages.battery(.init(percent: 64, charging: false))
+        XCTAssertNotEqual(try XCTUnwrap(charging.tiffRepresentation), try XCTUnwrap(idle.tiffRepresentation))
+    }
+
+    private func renderSystemControlSamples() throws {
+        let output = URL(fileURLWithPath: "/private/tmp/zonal-icons")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let rows: [(String, NSAppearance.Name, String, Int, Bool)] = [
+            ("light", .aqua, "ethernet", 100, false), ("wifi-low", .aqua, "wifi", 8, false),
+            ("charging", .aqua, "network", 64, true), ("dark", .darkAqua, "ethernet", 100, false),
+            ("half", .aqua, "network", 50, false), ("charging-dark", .darkAqua, "network", 64, true),
+            ("half-dark", .darkAqua, "network", 50, false),
+            ("fractional", .aqua, "ethernet", 100, false), ("fractional-dark", .darkAqua, "ethernet", 100, false)
+        ]
+        for (name, appearance, network, percent, charging) in rows {
+            let root = NSView(frame: CGRect(x: 0, y: 0, width: 330, height: 34))
+            let window = NSWindow(contentRect: root.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = root
+            root.wantsLayer = true
+            window.appearance?.performAsCurrentDrawingAppearance { root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+            let images = [try XCTUnwrap(SystemControlImages.symbol("speaker.wave.2")), SystemControlImages.bluetooth,
+                          try XCTUnwrap(SystemControlImages.symbol(network)), SystemControlImages.battery(.init(percent: percent, charging: charging))]
+            let offset: CGFloat = name.hasPrefix("fractional") ? 0.5 : 0
+            var x: CGFloat = 12 + offset
+            for (item, image) in zip(SystemControlItem.allCases, images) {
+                let button = SystemControlNativeButton(frame: CGRect(x: x, y: 5 + offset, width: item.controlWidth, height: 24))
+                button.cell = SystemControlButtonCell(); button.isBordered = false; button.imagePosition = .imageOnly
+                button.imageScaling = .scaleNone; button.font = SystemControlImages.font; button.contentTintColor = .labelColor
+                button.image = image; root.addSubview(button); x += item.controlWidth
+            }
+            let clock = ZoneTabClockField(labelWithString: "Tue 17. Nov  11:00")
+            clock.font = SystemControlImages.font; clock.sizeToFit()
+            clock.setFrameOrigin(CGPoint(x: x + 9, y: (34 - clock.frame.height) / 2 + offset))
+            root.addSubview(clock); root.layoutSubtreeIfNeeded()
+            for scale in [1, 2, 4] {
+                let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 330 * scale, pixelsHigh: 34 * scale,
+                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                    bytesPerRow: 0, bitsPerPixel: 0))
+                bitmap.size = root.bounds.size
+                root.cacheDisplay(in: root.bounds, to: bitmap)
+                try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: output.appendingPathComponent("\(name)-\(scale)x.png"))
+            }
+            window.close()
+        }
+    }
+
+    func testDynamicBatteryAndVolumeIndicators() {
+        XCTAssertEqual(SystemBattery(percent: 0, charging: false).symbol, "battery.0percent")
+        XCTAssertEqual(SystemBattery(percent: 24, charging: false).symbol, "battery.25percent")
+        XCTAssertEqual(SystemBattery(percent: 50, charging: false).symbol, "battery.50percent")
+        XCTAssertEqual(SystemBattery(percent: 74, charging: false).symbol, "battery.75percent")
+        XCTAssertEqual(SystemBattery(percent: 100, charging: false).symbol, "battery.100percent")
+        XCTAssertEqual(SystemBattery(percent: 30, charging: true).symbol, "battery.100percent.bolt")
+        XCTAssertEqual(SystemControlMonitor.volumeSymbol(level: 0.8, muted: true), "speaker.slash")
+        XCTAssertEqual(SystemControlMonitor.volumeSymbol(level: 0, muted: false), "speaker.slash")
+        XCTAssertEqual(SystemControlMonitor.volumeSymbol(level: 0.2, muted: false), "speaker.wave.1")
+        XCTAssertEqual(SystemControlMonitor.volumeSymbol(level: 0.5, muted: false), "speaker.wave.2")
+        XCTAssertEqual(SystemControlMonitor.volumeSymbol(level: 0.9, muted: false), "speaker.wave.3")
+        XCTAssertTrue(SystemControlImages.bluetooth.isTemplate)
+        XCTAssertEqual(SystemControlImages.bluetooth.size, CGSize(width: 9, height: 16))
+    }
+
+    func testSystemControlsFollowMainSharedStripWithoutWritingWorkspaceOrReflowingWindows() throws {
+        let (store, service, tracker, manager, _, _) = try fixture()
+        defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        let baseline = store.loadConfiguration()
+        let before = service.tabSnapshots()
+        let assignments = store.loadAssignments()
+        var updated = baseline
+        var appearance = updated.tabAppearance(for: updated.profiles[0])
+        appearance.systemControls = .init(isEnabled: true, items: [.network, .bluetooth])
+        updated.profiles[0].tabAppearance = appearance
+        XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: baseline, current: updated))
+        XCTAssertTrue(store.saveConfiguration(updated))
+        manager.reloadProfiles()
+        let snapshots = service.tabSnapshots()
+        XCTAssertEqual(snapshots.map(\.layout), before.map(\.layout))
+        XCTAssertEqual(snapshots.first { $0.systemControls != nil }?.systemControls, appearance.systemControls)
+        XCTAssertEqual(store.loadAssignments(), assignments)
+        appearance.systemControls?.isEnabled = false
+        updated.profiles[0].tabAppearance = appearance
+        XCTAssertTrue(store.saveConfiguration(updated))
+        XCTAssertFalse(service.tabSnapshots().contains { $0.systemControls?.isEnabled == true })
+    }
+
+    func testSystemBatteryPercentagesAndPassiveControlInput() {
+        XCTAssertNil(SystemBattery.percentage(current: 10, maximum: 0))
+        XCTAssertNil(SystemBattery.percentage(current: -1, maximum: 100))
+        XCTAssertEqual(SystemBattery.percentage(current: 55, maximum: 110), 50)
+        XCTAssertEqual(SystemBattery.percentage(current: 150, maximum: 100), 100)
+        let button = SystemControlNativeButton()
+        XCTAssertFalse(button.acceptsFirstResponder)
+        XCTAssertFalse(button.needsPanelToBecomeKey)
+        XCTAssertFalse(button.mouseDownCanMoveWindow)
+        XCTAssertFalse(button.accessibilityPerformPress())
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let compact = ZoneTabClockLabel.text(for: date, compact: true, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!)
+        XCTAssertFalse(compact.contains("Nov"))
+        XCTAssertFalse(compact.contains("\n"))
+    }
+
+    private static func nativeWindowOrder() -> [Int] {
+        (CGWindowListCopyWindowInfo(.optionOnScreenOnly, 0) as? [[String: Any]] ?? [])
+            .compactMap { $0[kCGWindowNumber as String] as? Int }
+    }
+
+    @MainActor private final class MenuTrackingProbe: NSObject, NSMenuDelegate {
+        var opened = false
+        var sampled = false
+        func menuWillOpen(_ menu: NSMenu) { opened = true }
+    }
+
+    @MainActor private final class ScrollProbeView: NSView {
+        var receivedEvents: [NSEvent] = []
+        override func scrollWheel(with event: NSEvent) { receivedEvents.append(event) }
+    }
+
+    func testPassiveTabInputPreservesScrollDelivery() throws {
+        let input = ZoneTabInputView()
+        let target = ScrollProbeView()
+        let cgEvent = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                           wheel1: 16, wheel2: 0, wheel3: 0))
+        let event = try XCTUnwrap(NSEvent(cgEvent: cgEvent))
+        input.scrollTarget = target
+        input.scrollWheel(with: event)
+        XCTAssertEqual(target.receivedEvents.count, 1)
+        XCTAssertTrue(target.receivedEvents.first === event)
+    }
+
+    func testLiveSystemPopupKeepsBackingBelowWindowAndWhitespaceReceivesInput() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else {
+            throw XCTSkip("Opt-in native system menu/input fixture")
+        }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let origin = CGPoint(x: screen.visibleFrame.midX - 380, y: screen.visibleFrame.midY - 190)
+        let native = NSWindow(contentRect: CGRect(x: origin.x + 20, y: origin.y + 45, width: 720, height: 290),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        native.isReleasedWhenClosed = false
+        native.backgroundColor = .systemTeal
+        native.orderFrontRegardless()
+        defer { native.close() }
+        let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: 740, height: 360), edge: .bottom)
+        let model = ZoneTabSnapshot(zoneID: .main, edge: .bottom, layout: layout,
+            items: [switcherItem(assignmentID: UUID(), windowID: UInt32(native.windowNumber), zoneID: .main)],
+            systemControls: .init(isEnabled: true))
+        let panel = ZoneTabController.makePanel()
+        panel.isReleasedWhenClosed = false
+        defer { panel.close() }
+        let host = ZoneTabHostingView(rootView: ZoneTabStripView(snapshot: model, focus: { _ in }))
+        host.sizingOptions = []
+        panel.contentView = host
+        panel.setFrame(CGRect(origin: origin, size: model.panelFrame().size), display: false)
+        panel.order(.below, relativeTo: native.windowNumber)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(300))
+        guard Self.nativeWindowOrder().contains(panel.windowNumber), Self.nativeWindowOrder().contains(native.windowNumber) else {
+            throw XCTSkip("Native Window Server fixture is unavailable")
+        }
+        let footprint = model.panelFrame()
+        let strip = layout.stripFrame.offsetBy(dx: -footprint.minX, dy: -footprint.minY)
+        let blank = CGPoint(x: strip.midX, y: strip.midY)
+        let screenPoint = panel.convertPoint(toScreen: host.convert(blank, to: nil))
+        let orderBefore = Self.nativeWindowOrder()
+        let panelIndex = try XCTUnwrap(orderBefore.firstIndex(of: panel.windowNumber))
+        // Ignore unrelated windows above this isolated fixture, including a locked signing host.
+        let above = panelIndex > 0 ? orderBefore[panelIndex - 1] : 0
+        XCTAssertEqual(NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: above), panel.windowNumber,
+            "Whitespace must reach the panel instead of the desktop")
+        func controls(_ view: NSView) -> [SystemControlNativeButton] {
+            if let button = view as? SystemControlNativeButton { return [button] }
+            return view.subviews.flatMap(controls)
+        }
+        let button = try XCTUnwrap(controls(host).first { $0.toolTip == "Volume" })
+        XCTAssertEqual(button.items, [.volume])
+        XCTAssertTrue(button.accessibilityPerformPress())
+        defer { SystemControlPanels.shared.close() }
+        let controlPanel = try XCTUnwrap(SystemControlPanels.shared.panel)
+        XCTAssertFalse(controlPanel.isOpaque)
+        XCTAssertFalse(controlPanel.hasShadow)
+        try await Task.sleep(for: .milliseconds(200))
+        let order = Self.nativeWindowOrder()
+        let backingIndex = try XCTUnwrap(order.firstIndex(of: panel.windowNumber))
+        let nativeIndex = try XCTUnwrap(order.firstIndex(of: native.windowNumber))
+        let controlIndex = try XCTUnwrap(order.firstIndex(of: controlPanel.windowNumber))
+        XCTAssertGreaterThan(backingIndex, nativeIndex, "Only the small control panel may rise above the current window")
+        XCTAssertLessThan(controlIndex, nativeIndex)
+        controlPanel.cancelOperation(nil)
+        XCTAssertNil(SystemControlPanels.shared.panel)
+    }
+
+    func testLiveLeftClicksNeverRaiseTabBacking() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else {
+            throw XCTSkip("Opt-in AppKit mouse dispatch/window ordering fixture")
+        }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let native = NSWindow(contentRect: CGRect(x: screen.visibleFrame.midX - 300, y: screen.visibleFrame.midY - 100,
+                                                  width: 580, height: 250), styleMask: [.titled], backing: .buffered, defer: false)
+        native.isReleasedWhenClosed = false
+        defer { native.close() }
+        let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: 600, height: 320), edge: .bottom)
+        let model = ZoneTabSnapshot(zoneID: .main, edge: .bottom, layout: layout,
+            items: [switcherItem(assignmentID: UUID(), windowID: UInt32(native.windowNumber), zoneID: .main)], showsClock: true)
+        let panel = ZoneTabController.makePanel()
+        panel.isReleasedWhenClosed = false
+        defer { panel.close() }
+        let host = ZoneTabHostingView(rootView: ZoneTabStripView(snapshot: model, focus: { _ in }))
+        host.sizingOptions = []
+        panel.contentView = host
+        panel.setFrame(CGRect(x: screen.visibleFrame.midX - 310, y: screen.visibleFrame.midY - 140,
+                              width: model.panelFrame().width, height: model.panelFrame().height), display: false)
+        native.orderFrontRegardless()
+        panel.order(.below, relativeTo: native.windowNumber)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        let footprint = model.panelFrame()
+        let strip = layout.stripFrame.offsetBy(dx: -footprint.minX, dy: -footprint.minY)
+        for point in [CGPoint(x: strip.minX + 1, y: strip.midY),
+                      CGPoint(x: strip.minX + layout.tabPadding + 12, y: strip.midY),
+                      CGPoint(x: strip.midX, y: strip.midY)] {
+            native.orderFrontRegardless()
+            panel.order(.below, relativeTo: native.windowNumber)
+            let location = host.convert(point, to: nil)
+            let hit = try XCTUnwrap(host.hitTest(host.superview?.convert(location, from: nil) ?? location))
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1))
+            XCTAssertTrue(hit.shouldDelayWindowOrdering(for: event), "Hit view \(type(of: hit)) must suppress implicit raising")
+            for eventType: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+                let click = try XCTUnwrap(NSEvent.mouseEvent(with: eventType, location: location, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil,
+                    eventNumber: 1, clickCount: 1, pressure: 1))
+                NSApp.sendEvent(click)
+                let order = Self.nativeWindowOrder()
+                let backingIndex = try XCTUnwrap(order.firstIndex(of: panel.windowNumber))
+                let nativeIndex = try XCTUnwrap(order.firstIndex(of: native.windowNumber))
+                XCTAssertGreaterThan(backingIndex, nativeIndex, "Backing rose after \(eventType) on \(type(of: hit))")
+            }
+        }
+    }
+
+    func testLiveSystemControlsOverContrastingBackground() async throws {
+        guard ProcessInfo.processInfo.environment["ZONAL_LIVE_SYSTEM_CONTROLS"] == "1" else {
+            throw XCTSkip("Opt-in system-control runtime fixture; use TEST_RUNNER_ZONAL_LIVE_SYSTEM_CONTROLS=1.")
+        }
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let origin = CGPoint(x: screen.visibleFrame.midX - 450, y: screen.visibleFrame.midY - 170)
+        let background = NSWindow(contentRect: CGRect(origin: origin, size: CGSize(width: 900, height: 340)),
+                                  styleMask: .borderless, backing: .buffered, defer: false)
+        background.isReleasedWhenClosed = false
+        background.backgroundColor = NSColor(calibratedRed: 0.2, green: 0.65, blue: 0.6, alpha: 1)
+        background.orderFrontRegardless()
+        defer { background.close() }
+        let width: CGFloat = 860
+        let layout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: width, height: 260), edge: .top, style: .shelf)
+        let items = (1...5).map { switcherItem(assignmentID: UUID(), windowID: UInt32($0), zoneID: .main) }
+        let snapshot = ZoneTabSnapshot(zoneID: .main, edge: .top, layout: layout, items: items,
+            showsClock: true, systemControls: .init(isEnabled: true))
+        let panel = ZoneTabController.makePanel()
+        panel.isReleasedWhenClosed = false
+        defer { panel.close() }
+        let host = NSHostingView(rootView: ZoneTabStripView(snapshot: snapshot, focus: { _ in }))
+        host.sizingOptions = []
+        panel.contentView = host
+        panel.setFrame(CGRect(origin: CGPoint(x: origin.x + 8, y: origin.y + 210), size: snapshot.panelFrame().size), display: false)
+        panel.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(500))
+        func buttons(_ view: NSView) -> [SystemControlNativeButton] {
+            if let button = view as? SystemControlNativeButton { return [button] }
+            return view.subviews.flatMap(buttons)
+        }
+        let controls = buttons(host)
+        XCTAssertGreaterThanOrEqual(controls.count, 3)
+        for button in controls {
+            let bounds = button.convert(button.bounds, to: host)
+            XCTAssertTrue(host.bounds.contains(bounds))
+            XCTAssertGreaterThan(bounds.width, 20)
+        }
+        // Preserve the actual AppKit-hosted rendering even on a host without desktop capture.
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = NSImage(size: host.bounds.size)
+        image.lockFocus()
+        NSColor(calibratedRed: 0.2, green: 0.65, blue: 0.6, alpha: 1).setFill()
+        NSRect(origin: .zero, size: image.size).fill()
+        NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: image.size)
+            .draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .sourceOver, fraction: 1)
+        image.unlockFocus()
+        let rendered = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(image.tiffRepresentation)))
+        try XCTUnwrap(rendered.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: "/private/tmp/zonal-system-controls-rendered.png"))
+        for edge in ZoneTabEdge.allCases {
+            let compactLayout = ZoneTabLayout(zoneFrame: CGRect(x: 0, y: 0, width: 300, height: 280), edge: edge, style: .shelf)
+            let compact = ZoneTabSnapshot(zoneID: .main, edge: edge, layout: compactLayout, items: items,
+                showsClock: true, systemControls: .init(isEnabled: true))
+            panel.setFrame(CGRect(origin: panel.frame.origin, size: compact.panelFrame().size), display: false)
+            host.rootView = ZoneTabStripView(snapshot: compact, focus: { _ in })
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertFalse(buttons(host).isEmpty)
+            for button in buttons(host) {
+                XCTAssertTrue(host.bounds.contains(button.convert(button.bounds, to: host)), "Controls escaped \(edge)")
+            }
+        }
+        panel.setFrame(CGRect(origin: CGPoint(x: origin.x + 8, y: origin.y + 210), size: snapshot.panelFrame().size), display: false)
+        host.rootView = ZoneTabStripView(snapshot: snapshot, focus: { _ in })
+        host.layoutSubtreeIfNeeded()
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-R\(Int(origin.x)),\(Int(screen.frame.maxY - origin.y - 340)),900,340", "/private/tmp/zonal-system-controls-live.png"]
+        try capture.run(); capture.waitUntilExit()
+        guard capture.terminationStatus == 0 else { throw XCTSkip("Desktop capture unavailable") }
+    }
+
     func testProfileSwitchRestoresSpacingTabsAndClockWithoutChangingOtherProfile() throws {
         let (store, service, tracker, manager, _, assignments) = try fixture()
         defer { service.stop(); tracker.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
@@ -748,11 +1606,17 @@ final class ZoneTabTests: XCTestCase {
         controller.refresh()
         XCTAssertTrue(controller.panels.first === panel)
         XCTAssertFalse(panel.isVisible)
+        XCTAssertTrue(controller.visibilityState.contains("reason=session-suspended"))
         now = 100; suspended = false
         controller.refresh()
         XCTAssertTrue(controller.panels.first === panel)
         XCTAssertTrue(panel.contentView === host)
         XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(controller.visibilityState.contains("reason=presented"))
+        let transitionCount = controller.detailedDiagnosticLines().filter { $0.hasPrefix("tab.visibility ") }.count
+        controller.refresh()
+        XCTAssertEqual(controller.detailedDiagnosticLines().filter { $0.hasPrefix("tab.visibility ") }.count, transitionCount,
+                       "Unchanged refreshes must not spam the visibility log")
         native = nil; now += 0.1
         controller.refresh()
         XCTAssertTrue(panel.isVisible)
@@ -773,6 +1637,7 @@ final class ZoneTabTests: XCTestCase {
         models = []
         controller.refresh()
         XCTAssertTrue(controller.panels.isEmpty, "Disabling tabs or confirmed empty membership must remove the panel immediately")
+        XCTAssertTrue(controller.visibilityState.contains("reason=no-models"))
     }
 
     func testUnchangedTabsDoNotRelayoutOrRereadCornerRadii() async throws {
@@ -867,7 +1732,7 @@ final class ZoneTabTests: XCTestCase {
         var focusedWindow: ManagedWindow?
     }
 
-    private func fixture(inventory: Inventory = Inventory()) throws -> (PersistenceStore, WorkspaceStateService, WindowTracker, ProfileManager, [ManagedWindow], [WindowAssignment]) {
+    private func fixture(inventory: Inventory = Inventory(), reportsFocus: Bool = false) throws -> (PersistenceStore, WorkspaceStateService, WindowTracker, ProfileManager, [ManagedWindow], [WindowAssignment]) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("zonal-tabs-\(UUID())")
         let store = PersistenceStore(supportDirectory: directory)
         store.bootstrap()
@@ -892,7 +1757,9 @@ final class ZoneTabTests: XCTestCase {
         assignments[3].managementMode = .ignored
         store.saveAssignments(assignments)
         inventory.windows = windows
-        let registry = WindowRegistry(inventoryProvider: { complete in complete(inventory.windows, nil) })
+        let registry = WindowRegistry(inventoryProvider: { complete in
+            complete(inventory.windows, reportsFocus ? inventory.focusedWindow?.element : nil)
+        })
         let tracker = WindowTracker(registry: registry, focusedWindowProvider: { inventory.focusedWindow })
         let service = WorkspaceStateService(profileManager: manager, layoutEngine: LayoutEngine(),
             windowRegistry: registry, windowTracker: tracker,
@@ -933,6 +1800,51 @@ final class ZoneTabTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: store.workspaceURL), recoveryBytes)
         service.finishDisplayTransition(generation: generation)
         XCTAssertEqual(service.tabSnapshots().count, 1)
+    }
+
+    func testTabVisibilityRecoversWhenSameFocusedWindowLeavesFullScreenDuringWakeScan() throws {
+        let inventory = Inventory()
+        let (store, service, tracker, _, _, _) = try fixture(inventory: inventory, reportsFocus: true)
+        defer { service.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        inventory.windows[0].isFullScreen = true
+        inventory.focusedWindow = inventory.windows[0]
+        tracker.reconcile()
+        _ = tracker.captureFocusedWindow(origin: "before-sleep")
+        XCTAssertTrue(service.tabSnapshots().isEmpty)
+        XCTAssertTrue(service.tabSnapshotDiagnostic.contains("reason=focused-full-screen"))
+        let focusedID = tracker.focusedWindowID
+        var focusEvents = 0
+        let onFocusChanged = tracker.onFocusChanged
+        tracker.onFocusChanged = { window in focusEvents += 1; onFocusChanged?(window) }
+        XCTAssertTrue(service.beginSessionRecovery())
+        inventory.windows[0].isFullScreen = false
+        inventory.focusedWindow = inventory.windows[0]
+        tracker.reconcile()
+        service.finishSessionRecovery()
+        XCTAssertEqual(tracker.focusedWindowID, focusedID)
+        XCTAssertEqual(focusEvents, 0, "Wake can update presentation without another focus event")
+        XCTAssertFalse(service.tabSnapshots().isEmpty, "Tabs must return without switching apps")
+        XCTAssertTrue(service.tabSnapshotDiagnostic.contains("reason=ready"))
+        inventory.windows[0].isFullScreen = true
+        inventory.focusedWindow = inventory.windows[0]
+        tracker.reconcile()
+        XCTAssertTrue(service.tabSnapshots().isEmpty, "Actual full-screen windows must still hide tabs")
+    }
+
+    func testFocusCallbackSeesCurrentFullScreenState() throws {
+        let inventory = Inventory()
+        let (store, service, tracker, _, _, _) = try fixture(inventory: inventory)
+        defer { service.stop(); try? FileManager.default.removeItem(at: store.supportDirectory) }
+        inventory.windows[1].isFullScreen = true
+        tracker.reconcile()
+        var snapshotsAtFocus: [ZoneTabSnapshot] = []
+        service.onFocusedWindowChanged = { _ in snapshotsAtFocus = service.tabSnapshots() }
+        inventory.focusedWindow = inventory.windows[1]
+        _ = tracker.captureFocusedWindow(origin: "enter-full-screen")
+        XCTAssertTrue(snapshotsAtFocus.isEmpty, "Refresh callbacks must not render the previous focus state")
+        inventory.focusedWindow = inventory.windows[0]
+        _ = tracker.captureFocusedWindow(origin: "leave-full-screen")
+        XCTAssertFalse(snapshotsAtFocus.isEmpty)
     }
 
     func testCustomOnlyZoneKeepsTabsWithoutBackingOverlapOrPlacementChange() throws {
@@ -1726,4 +2638,47 @@ extension ZoneTabTests {
         let saved = try XCTUnwrap(store.loadAssignments().first { $0.id == assignments[0].id })
         XCTAssertFalse(saved.fitsZone(in: config.profiles[0].id))
     }
+}
+
+private final class SystemPanelHardwareProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var readRequests: [SystemControlItem] = []
+    private var actions = 0
+    private var onMain = false
+    private var volume: Float?
+    private var bluetoothConnectedState: Bool?
+    private let failure: String?
+    init(error: String? = nil) { failure = error }
+    var reads: [SystemControlItem] { lock.withLock { readRequests } }
+    var actionCount: Int { lock.withLock { actions } }
+    var usedMainThread: Bool { lock.withLock { onMain } }
+    var lastVolume: Float? { lock.withLock { volume } }
+    var lastBluetoothConnectedState: Bool? { lock.withLock { bluetoothConnectedState } }
+    func read(_ item: SystemControlItem) -> SystemControlSnapshot {
+        lock.withLock { readRequests.append(item); onMain = onMain || Thread.isMainThread }
+        Thread.sleep(forTimeInterval: 0.03)
+        var value = SystemControlSnapshot()
+        value.network.connection = "Ethernet connected"
+        value.outputs = [.init(id: 1, name: "Speakers", uid: "builtin")]
+        value.outputID = 1; value.volume = 0.6
+        value.battery = .init(percent: 90, charging: true, source: "AC Power")
+        value.bluetoothPower = true
+        value.bluetoothDevices = [.init(id: "mouse", name: "Mouse", connected: true)]
+        return value
+    }
+    func perform(_ action: SystemControlAction) -> String? {
+        lock.withLock {
+            actions += 1; onMain = onMain || Thread.isMainThread
+            if case .volume(_, let value) = action { volume = value }
+            if case .bluetooth(let device) = action { bluetoothConnectedState = device.connected }
+        }
+        Thread.sleep(forTimeInterval: 0.03)
+        return failure
+    }
+}
+
+private final class BluetoothBatteryProbe: NSObject {
+    @objc var batteryPercentSingle: UInt8 = 0
+    @objc var batteryPercentLeft: UInt8 = 72
+    @objc var batteryPercentRight: Int32 = 88
 }

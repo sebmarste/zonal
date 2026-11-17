@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 struct ZoneTabGroupPolicy {
@@ -65,6 +66,7 @@ struct ZoneTabSnapshot: Equatable {
     var stackItems: [SwitcherItem] = []
     var fittedWindowIDs: Set<LiveWindowID> = []
     var showsClock = false
+    var systemControls: SystemControlSettings? = nil
     var moveDestinations: [Zone] = []
     var sizeActions: [UUID: ZoneTabAction] = [:]
 
@@ -192,6 +194,9 @@ struct ZoneTabContinuityPolicy {
 
 @MainActor
 final class ZoneTabController: NSObject {
+    private static let logger = Logger(subsystem: "com.sebmarste.zonal", category: "Tabs")
+    private(set) var visibilityState = "not-evaluated"
+    private var visibilityTransitions: [String] = []
     private struct Presentation {
         var panel: NSPanel
         var host: ZoneTabHostingView
@@ -298,7 +303,7 @@ final class ZoneTabController: NSObject {
         spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.hide() }
+            MainActor.assumeIsolated { self?.hide(reason: "space-change") }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             guard self != nil else { timer.invalidate(); return }
@@ -308,7 +313,7 @@ final class ZoneTabController: NSObject {
         refresh()
     }
 
-    func stop() {
+    func stop(reason: String = "stopped") {
         timer?.invalidate()
         timer = nil
         displayLink?.invalidate()
@@ -316,7 +321,7 @@ final class ZoneTabController: NSObject {
         if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
         spaceObserver = nil
         displaySnapshot = nil
-        hide()
+        hide(reason: reason)
         cornerRadii.removeAll()
         radiusReadAt.removeAll()
     }
@@ -341,15 +346,26 @@ final class ZoneTabController: NSObject {
         refresh()
     }
 
-    func hide() {
+    func hide(reason: String = "hidden") {
         interaction.cancel()
         displayLink?.isPaused = true
         for presentation in presentations.values { presentation.panel.orderOut(nil) }
         presentations.removeAll()
+        recordVisibility(reason: reason)
     }
 
     func detailedDiagnosticLines() -> [String] {
-        ["Tab work: refreshes=\(refreshCount) contentUpdates=\(contentUpdateCount) layouts=\(layoutCount) panels=\(presentations.count) hostLayouts=\(presentations.values.reduce(0) { $0 + $1.host.layoutPassCount }) fallbackInterval=1"]
+        ["Tab work: refreshes=\(refreshCount) contentUpdates=\(contentUpdateCount) layouts=\(layoutCount) panels=\(presentations.count) hostLayouts=\(presentations.values.reduce(0) { $0 + $1.host.layoutPassCount }) fallbackInterval=1",
+         "Tab visibility: \(visibilityState)"] + visibilityTransitions.map { "tab.visibility \($0)" }
+    }
+
+    private func recordVisibility(reason: String, models: Int = 0, sampledWindows: Int = -1) {
+        let state = "reason=\(reason) models=\(models) panels=\(presentations.count) shown=\(presentations.values.filter { $0.panel.isVisible }.count) sampledWindows=\(sampledWindows)"
+        guard state != visibilityState else { return }
+        visibilityState = state
+        visibilityTransitions.append("uptime=\(Int(uptime())) \(state)")
+        if visibilityTransitions.count > 12 { visibilityTransitions.removeFirst() }
+        Self.logger.info("Tab visibility: \(state, privacy: .public)")
     }
 
     func refresh() {
@@ -365,18 +381,20 @@ final class ZoneTabController: NSObject {
             interaction.cancel()
             // Keep the host and its geometry, but never show tabs over the lock screen.
             for presentation in presentations.values { presentation.panel.orderOut(nil) }
+            recordVisibility(reason: "session-suspended")
             return
         }
-        guard let mainScreen = NSScreen.screens.first else { hide(); return }
+        guard let mainScreen = NSScreen.screens.first else { hide(reason: "no-screen"); return }
         let topology = displaySnapshotQuery()
         if let displaySnapshot, displaySnapshot != topology {
-            hide()
+            hide(reason: "display-change")
             if timer != nil { configureDisplayLink() }
         }
         displaySnapshot = topology
         let models = snapshots()
-        guard !models.isEmpty else { hide(); return }
-        let visible = visibleWindowQuery() ?? []
+        guard !models.isEmpty else { hide(reason: "no-models"); return }
+        let sample = visibleWindowQuery()
+        let visible = sample ?? []
         let now = uptime()
         let dragged = visible.first {
             LiveWindowID.quartz(processIdentifier: $0.key.pid, windowNumber: $0.key.number) == draggedWindowID
@@ -446,6 +464,8 @@ final class ZoneTabController: NSObject {
         for id in Array(presentations.keys) where !retained.contains(id) {
             presentations.removeValue(forKey: id)?.panel.orderOut(nil)
         }
+        recordVisibility(reason: presentations.values.contains { $0.panel.isVisible } ? "presented" : "no-visible-target",
+                         models: models.count, sampledWindows: sample?.count ?? -1)
     }
 
     func cornerRadius(for key: OutlineWindowKey, fallback: CGFloat = 16) -> CGFloat {
@@ -488,6 +508,34 @@ final class ZoneTabController: NSObject {
 
 final class ZoneTabHostingView: NSHostingView<ZoneTabStripView> {
     private(set) var layoutPassCount = 0
+    override var acceptsFirstResponder: Bool { false }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        var ancestor: NSView? = hit
+        while let view = ancestor {
+            if view is ZoneTabNativeButton || view is SystemControlNativeButton || view is ZoneTabClockField { return hit }
+            if view === self { break }
+            ancestor = view.superview
+        }
+        func inputSurface(in view: NSView) -> ZoneTabInputView? {
+            if let input = view as? ZoneTabInputView { return input }
+            for child in view.subviews {
+                if let input = inputSurface(in: child) { return input }
+            }
+            return nil
+        }
+        // SwiftUI containers otherwise allow ordering before sendEvent can suppress it.
+        guard let input = inputSurface(in: self), input.bounds.contains(input.convert(point, from: superview)) else { return hit }
+        input.scrollTarget = hit === input ? nil : hit
+        return input
+    }
+
+    override func mouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
     override func layout() {
         layoutPassCount += 1
         super.layout()
@@ -495,13 +543,75 @@ final class ZoneTabHostingView: NSHostingView<ZoneTabStripView> {
 }
 
 final class ZoneTabPanel: NSPanel {
+    var makeBackgroundMenu: () -> NSMenu = {
+        StatusItemController.shared.makeExtendedMenu(snapshot: AppContainer.shared.currentStatusMenuSnapshot())
+    }
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     // The visible surface is already inside its zone; allow its transparent shadow margin across screen edges.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown || event.type == .rightMouseDown { NSApp.preventWindowOrdering() }
+        if event.type == .rightMouseDown,
+           let menu = backgroundMenu(at: event.locationInWindow) {
+            let point = convertPoint(toScreen: event.locationInWindow)
+            ZoneTabMenuPresentation.popUp(menu, at: point)
+            return
+        }
         super.sendEvent(event)
+    }
+
+    func backgroundMenu(at point: NSPoint) -> NSMenu? {
+        guard let host = contentView as? NSHostingView<ZoneTabStripView> else { return nil }
+        let snapshot = host.rootView.snapshot
+        let footprint = snapshot.panelFrame()
+        let strip = snapshot.layout.stripFrame.offsetBy(dx: -footprint.minX, dy: -footprint.minY)
+        let localPoint = host.convert(point, from: nil)
+        guard strip.contains(localPoint) else { return nil }
+        // Child controls own their menus. Empty scroll-view space and zone icons use the shared menu.
+        var hit = host.hitTest(host.superview?.convert(point, from: nil) ?? point)
+        while let view = hit {
+            if view is ZoneTabNativeButton || view is SystemControlNativeButton || view is ZoneTabClockField { return nil }
+            if view === host { break }
+            hit = view.superview
+        }
+        return makeBackgroundMenu()
+    }
+}
+
+enum ZoneTabMenuPresentation {
+    static func popUp(_ menu: NSMenu, at screenPoint: CGPoint) {
+        NSApp.preventWindowOrdering()
+        // A view-relative popup lets AppKit raise its full backing panel along with the menu.
+        menu.popUp(positioning: nil, at: screenPoint, in: nil)
+    }
+}
+
+private struct ZoneTabInputSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> ZoneTabInputView {
+        let view = ZoneTabInputView()
+        view.wantsLayer = true
+        // Material-only SwiftUI whitespace does not provide a reliable Window Server hit region.
+        view.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.08).cgColor
+        view.layer?.cornerRadius = 10
+        view.layer?.masksToBounds = true
+        return view
+    }
+    func updateNSView(_ view: ZoneTabInputView, context: Context) {}
+}
+
+final class ZoneTabInputView: NSView {
+    weak var scrollTarget: NSView?
+    override var acceptsFirstResponder: Bool { false }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { NSApp.preventWindowOrdering() }
+    override func scrollWheel(with event: NSEvent) {
+        if let scrollTarget { scrollTarget.scrollWheel(with: event) }
+        else { super.scrollWheel(with: event) }
     }
 }
 
@@ -524,6 +634,9 @@ struct ZoneTabStripView: View {
                 ZoneTabSurface(surfaceFrame: geometry.localSurfaceFrame,
                     cornerRadius: cornerRadius + snapshot.layout.borderWidth, borderOpacity: 0.65)
             }
+            ZoneTabInputSurface()
+                .frame(width: strip.width, height: strip.height)
+                .offset(x: strip.minX, y: strip.minY)
             tabContent
                 .clipped()
                 .offset(x: strip.minX, y: strip.minY)
@@ -532,29 +645,47 @@ struct ZoneTabStripView: View {
     }
 
     private var tabContent: some View {
-        Group {
-            if snapshot.edge.isVertical {
-                VStack(spacing: 4) {
-                    if snapshot.showsClock { clock.frame(maxWidth: .infinity, alignment: .trailing) }
-                    tabsArea
-                }
-            } else {
-                HStack(spacing: snapshot.showsClock ? 6 : 0) {
-                    tabsArea
-                    if snapshot.showsClock { clock }
+        GeometryReader { geometry in
+            let enabled = snapshot.systemControls?.isEnabled == true
+            let compactClock = enabled && !snapshot.edge.isVertical && geometry.size.width < 650
+            let clockWidth: CGFloat = snapshot.showsClock
+                ? (ZoneTabClockLabel.text(for: Date(), compact: compactClock) as NSString)
+                    .size(withAttributes: [.font: SystemControlImages.font]).width + 6
+                : 0
+            let showClock = snapshot.showsClock && (!enabled || snapshot.edge.isVertical || geometry.size.width >= clockWidth + 110)
+            let controlsWidth = max(28, min(200, geometry.size.width - (showClock ? clockWidth : 0) - 84))
+            Group {
+                if snapshot.edge.isVertical {
+                    VStack(spacing: 4) {
+                        if showClock { clock(compact: false).frame(maxWidth: .infinity, alignment: .trailing) }
+                        if enabled, let settings = snapshot.systemControls {
+                            SystemControlStrip(settings: settings, availableWidth: 28, vertical: true)
+                        }
+                        tabsArea
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        tabsArea
+                        if enabled, let settings = snapshot.systemControls {
+                            SystemControlStrip(settings: settings, availableWidth: controlsWidth, vertical: false)
+                                .layoutPriority(1)
+                        }
+                        if showClock { clock(compact: compactClock) }
+                    }
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .padding(snapshot.layout.tabPadding)
         .frame(width: snapshot.layout.stripFrame.width, height: snapshot.layout.stripFrame.height,
                alignment: snapshot.edge.isVertical ? .bottom : .trailing)
     }
 
-    private var clock: some View {
+    private func clock(compact: Bool) -> some View {
         TimelineView(.everyMinute) { context in
-            ZoneTabClockLabel(date: context.date, stacked: snapshot.edge.isVertical)
+            ZoneTabClockLabel(date: context.date, stacked: snapshot.edge.isVertical, compact: compact)
                 .fixedSize()
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 3)
                 .frame(height: snapshot.edge.isVertical ? 36 : 24)
                 .help(context.date.formatted(date: .complete, time: .omitted))
         }
@@ -690,8 +821,9 @@ final class ZoneTabClockField: NSTextField {
 struct ZoneTabClockLabel: NSViewRepresentable {
     var date: Date
     var stacked = false
+    var compact = false
 
-    static func text(for date: Date, stacked: Bool = false,
+    static func text(for date: Date, stacked: Bool = false, compact: Bool = false,
                      locale: Locale = .autoupdatingCurrent, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         let formatter = DateFormatter()
         formatter.locale = locale
@@ -700,12 +832,12 @@ struct ZoneTabClockLabel: NSViewRepresentable {
         let day = formatter.string(from: date)
         formatter.dateStyle = .none
         formatter.timeStyle = .short
-        return day + (stacked ? "\n" : "  ") + formatter.string(from: date)
+        return compact ? formatter.string(from: date) : day + (stacked ? "\n" : "  ") + formatter.string(from: date)
     }
 
     func makeNSView(context: Context) -> NSTextField {
         let label = ZoneTabClockField(labelWithString: "")
-        label.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        label.font = SystemControlImages.font
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.setAccessibilityIdentifier("main-stack-clock")
         return label
@@ -714,7 +846,7 @@ struct ZoneTabClockLabel: NSViewRepresentable {
     func updateNSView(_ label: NSTextField, context: Context) {
         label.maximumNumberOfLines = stacked ? 2 : 1
         label.usesSingleLineMode = !stacked
-        label.stringValue = Self.text(for: date, stacked: stacked)
+        label.stringValue = Self.text(for: date, stacked: stacked, compact: compact)
         label.setAccessibilityLabel("Date and time")
         label.setAccessibilityValue(label.stringValue)
     }
