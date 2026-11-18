@@ -421,7 +421,8 @@ extension AppContainer {
                 id: zone.id.rawValue,
                 name: ZoneNameResolver().name(for: zone.id, in: profile.zones),
                 windowCount: items.filter { $0.zoneID == zone.id }.count,
-                isSelected: zone.id == model.selectedZoneID
+                isSelected: zone.id == model.selectedZoneID,
+                frame: zone.frame
             )
         }
         let windows = items.map {

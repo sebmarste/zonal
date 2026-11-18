@@ -210,6 +210,7 @@ struct LocalAutomationZone: Codable, Equatable {
     var name: String
     var windowCount: Int
     var isSelected: Bool
+    var frame: NormalizedFrame? = nil
 }
 
 struct LocalAutomationZoneReference: Codable, Equatable {

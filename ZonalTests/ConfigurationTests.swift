@@ -2146,6 +2146,16 @@ extension ConfigurationTests {
         XCTAssertTrue(fixture.presses.isEmpty)
     }
 
+    func testAutomationZonePreviewIsOptionalAndRoundTripsActualGeometry() throws {
+        let old = try JSONDecoder().decode(LocalAutomationZone.self,
+            from: Data(#"{"id":"left","name":"Left","windowCount":1,"isSelected":true}"#.utf8))
+        XCTAssertNil(old.frame)
+        let zone = LocalAutomationZone(id: "left", name: "Left", windowCount: 1, isSelected: true,
+            frame: NormalizedFrame(x: 0, y: 0, width: 0.5, height: 1))
+        let decoded = try JSONDecoder().decode(LocalAutomationZone.self, from: JSONEncoder().encode(zone))
+        XCTAssertEqual(decoded.frame, zone.frame)
+    }
+
     func testNativeCatalogProtocolRequiresCompleteArguments() {
         let transaction = UUID()
         XCTAssertEqual(LocalAutomationCommand(name: "undo-if-current", arguments: [transaction.uuidString]), .undoIfCurrent(transaction))

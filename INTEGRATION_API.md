@@ -21,6 +21,8 @@ profileID and assignmentID. All must still identify one non-minimized, non-fulls
 window in Zonal's current profile. There is no frontmost-window fallback. Results contain only
 actions allowed by the same RestoreEngine guards and tab snapshot policy used by Zonal's UI.
 Optional appName, windowTitle and zoneName fields let clients label the exact target.
+The status/zones projection includes optional normalized zone frames for item previews.
+These are presentation metadata; scope and action execution remain authoritative in Zonal.
 
 `window-action <origin-json> <action-id>` resolves scope again and delegates fit, restore-custom,
 move or close to Zonal's existing engine. Undo is exclusively global. Acceptance is not placement verification.
