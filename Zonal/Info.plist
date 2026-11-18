@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.5</string>
+	<string>0.5.6</string>
 	<key>CFBundleVersion</key>
-	<string>101</string>
+	<string>102</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

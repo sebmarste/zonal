@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 enum LocalAutomationProtocol {
     static let currentVersion = 2
@@ -7,6 +8,11 @@ enum LocalAutomationProtocol {
     Zonal local API v2
     Usage: Zonal --automation <command> [argument]
 
+    Integrations: capabilities, window-scope <origin-json>, window-action <origin-json> <action-id>
+                  undo-if-current <transaction-id> (refuse if the last undo transaction changed)
+                  native-window-scope <origin-json> (export commands without opening a panel)
+                  native-window-action <origin-json> <scope-token> <command-id>
+                  show-window-actions <origin-json> (Zonal's own searchable window menu)
     Read: status, health, windows, zones, debug-state, diagnostics, doctor, app-menus, system-controls-status
     System controls: open-system-control <network|volume|battery|bluetooth>
     Switcher: show-global (All Windows), show-zone (By Zone), next, previous, confirm, cancel
@@ -14,7 +20,7 @@ enum LocalAutomationProtocol {
              focus-bundle <bundle-id>, focus-assignment <uuid>, move-focused <zone-id-or-name>
              move-focused-relative <left|right|up|down>
     Windows: fit-assignment <uuid> (fits that exact managed window to its assigned zone)
-    Workspace: rescan, apply-profile <profile-id>, restore, open-settings
+    Workspace: rescan, apply-profile <profile-id>, restore, open-settings, undo
     Performance: switcher-metrics, reset-switcher-metrics, menu-metrics, reset-menu-metrics
     """
     static let directoryURL = ZonalStoragePaths.current.appendingPathComponent("Automation", isDirectory: true)
@@ -30,6 +36,14 @@ enum LocalAutomationReadKind: String, Equatable {
 }
 
 enum LocalAutomationCommand: Equatable {
+    case capabilities
+    case undo
+    case undoIfCurrent(UUID)
+    case nativeWindowScope(String)
+    case nativeWindowAction(String, String, String)
+    case windowScope(String)
+    case windowAction(String, String)
+    case showWindowActions(String)
     case read(LocalAutomationReadKind)
     case appMenus
     case systemControlsStatus
@@ -64,6 +78,17 @@ enum LocalAutomationCommand: Equatable {
 
     init(name: String, arguments: [String]) {
         switch name {
+        case "native-window-scope": self = arguments.count == 1 ? .nativeWindowScope(arguments[0]) : .invalid("Captured origin required")
+        case "native-window-action": self = arguments.count == 3 ? .nativeWindowAction(arguments[0], arguments[1], arguments[2]) : .invalid("Origin, token and command required")
+        case "undo": self = arguments.isEmpty ? .undo : .invalid("undo takes no arguments")
+        case "undo-if-current":
+            self = arguments.count == 1 ? UUID(uuidString: arguments[0]).map(Self.undoIfCurrent)
+                ?? .invalid("Valid undo transaction required") : .invalid("Undo transaction required")
+        case "capabilities": self = arguments.isEmpty ? .capabilities : .invalid("No arguments expected")
+        case "window-scope": self = arguments.count == 1 ? .windowScope(arguments[0]) : .invalid("Captured origin required")
+        case "show-window-actions": self = arguments.count == 1 ? .showWindowActions(arguments[0]) : .invalid("Captured origin required")
+        case "window-action":
+            self = arguments.count == 2 ? .windowAction(arguments[0], arguments[1]) : .invalid("Captured origin and action required")
         case "status": self = .read(.status)
         case "health": self = .read(.health)
         case "windows": self = .read(.windows)
@@ -152,6 +177,16 @@ struct LocalAutomationRequest: Codable {
     var id: String
     var command: String
     var arguments: [String]
+    var lifetime: LocalAutomationRequestLifetime? = nil
+    private enum CodingKeys: String, CodingKey { case apiVersion, id, command, arguments }
+}
+
+final class LocalAutomationRequestLifetime: Sendable {
+    private let cancelled = Mutex(false)
+    let deadline: TimeInterval
+    init(deadline: TimeInterval) { self.deadline = deadline }
+    var isValid: Bool { !cancelled.withLock { $0 } && ProcessInfo.processInfo.systemUptime < deadline }
+    func cancel() { cancelled.withLock { $0 = true } }
 }
 
 enum LocalAutomationExecutionState: String, Codable {
@@ -175,6 +210,7 @@ struct LocalAutomationZone: Codable, Equatable {
     var name: String
     var windowCount: Int
     var isSelected: Bool
+    var frame: NormalizedFrame? = nil
 }
 
 struct LocalAutomationZoneReference: Codable, Equatable {
@@ -214,7 +250,66 @@ struct LocalAutomationDebugState: Codable, Equatable {
     var windows: [LocalAutomationDebugWindow]
 }
 
+struct LocalAutomationOrigin: Codable, Equatable {
+    var pid: Int32
+    var windowID: UInt32
+    var bundleID: String
+    var session: String
+    var profileID: String?
+    var assignmentID: String?
+    var liveID: String { "\(pid):cg:\(windowID)" }
+    var nativeSessionKey: String {
+        [session, profileID ?? "", assignmentID ?? ""].map { "\($0.utf8.count):\($0)" }.joined()
+    }
+}
+
+struct LocalAutomationScopedAction: Codable, Equatable {
+    var id: String
+    var title: String
+}
+
+struct LocalAutomationWindowScope: Codable, Equatable {
+    var profileID: String
+    var liveWindowID: String
+    var assignmentID: String
+    var actions: [LocalAutomationScopedAction]
+    var appName: String? = nil
+    var windowTitle: String? = nil
+    var zoneName: String? = nil
+}
+
+struct LocalAutomationNativeCommand: Codable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var path: [String]
+    var enabled: Bool
+    var shortcut: String
+}
+
+struct LocalAutomationNativeScope: Codable, Equatable, Sendable {
+    var token: String
+    var commands: [LocalAutomationNativeCommand]
+    var complete: Bool
+}
+
+struct LocalAutomationUndoTarget: Codable, Equatable {
+    var bundleID: String
+    var liveWindowID: String?
+    var assignmentID: String?
+    var title: String?
+}
+
+struct LocalAutomationUndoTransaction: Codable, Equatable {
+    var id: String
+    var name: String
+    var targets: [LocalAutomationUndoTarget]
+}
+
 struct LocalAutomationResult: Codable, Equatable {
+    var undoTransaction: LocalAutomationUndoTransaction?
+    var capabilities: [String]?
+    var windowScope: LocalAutomationWindowScope?
+    var nativeScope: LocalAutomationNativeScope?
     var state: LocalAutomationExecutionState
     var health: LocalAutomationHealth?
     var displaySetup: String?
@@ -441,6 +536,7 @@ final class LocalAutomationSocketServer {
 
     private struct Connection {
         var source: DispatchSourceRead
+        var lifetime: LocalAutomationRequestLifetime
         var buffer = Data()
         var isAwaitingResponse = false
         var readSuspended = false
@@ -575,7 +671,8 @@ final class LocalAutomationSocketServer {
         source.setCancelHandler {
             Darwin.close(descriptor)
         }
-        var connection = Connection(source: source)
+        var connection = Connection(source: source,
+            lifetime: LocalAutomationRequestLifetime(deadline: ProcessInfo.processInfo.systemUptime + connectionTimeout))
         let id = connection.id
         let deadline = DispatchWorkItem { [weak self] in
             guard self?.connections[descriptor]?.id == id else { return }
@@ -588,8 +685,13 @@ final class LocalAutomationSocketServer {
     }
 
     private func readRequest(from descriptor: Int32) {
-        guard var connection = connections[descriptor],
-              !connection.isAwaitingResponse else { return }
+        guard var connection = connections[descriptor] else { return }
+        if connection.isAwaitingResponse {
+            var byte: UInt8 = 0
+            let count = Darwin.recv(descriptor, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
+            if count >= 0 || ![EAGAIN, EWOULDBLOCK, EINTR].contains(errno) { closeConnection(descriptor) }
+            return
+        }
         var buffer = [UInt8](repeating: 0, count: 4096)
         let count = Darwin.recv(descriptor, &buffer, buffer.count, 0)
         if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { return }
@@ -611,7 +713,7 @@ final class LocalAutomationSocketServer {
         connections[descriptor] = connection
         guard let newline = connection.buffer.firstIndex(of: 0x0A) else { return }
         let requestData = connection.buffer[..<newline]
-        guard let request = try? JSONDecoder().decode(LocalAutomationRequest.self, from: requestData) else {
+        guard var request = try? JSONDecoder().decode(LocalAutomationRequest.self, from: requestData) else {
             sendFailure(
                 requestID: "unknown",
                 command: "unknown",
@@ -632,9 +734,8 @@ final class LocalAutomationSocketServer {
             return
         }
         connection.isAwaitingResponse = true
-        connection.readSuspended = true
-        connection.source.suspend()
         connection.buffer.removeAll()
+        request.lifetime = connection.lifetime
         let id = connection.id
         connections[descriptor] = connection
         handler(request) { [weak self] response in
@@ -696,6 +797,7 @@ final class LocalAutomationSocketServer {
 
     private func closeConnection(_ descriptor: Int32) {
         guard let connection = connections.removeValue(forKey: descriptor) else { return }
+        connection.lifetime.cancel()
         connection.deadline?.cancel()
         let readSource = connection.source
         let suspended = connection.readSuspended

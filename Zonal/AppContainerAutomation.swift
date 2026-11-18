@@ -8,13 +8,48 @@ extension AppContainer {
         guard automationServer == nil else { return }
         let server = LocalAutomationSocketServer { [weak self] request, reply in
             guard let self else { return }
-            if case .appMenus = LocalAutomationCommand(name: request.command, arguments: request.arguments) {
+            switch LocalAutomationCommand(name: request.command, arguments: request.arguments) {
+            case .appMenus:
                 self.appCommands.inspectActiveMenus { diagnostics in
                     reply(LocalAutomationResponse(apiVersion: LocalAutomationProtocol.currentVersion,
                         requestID: request.id, command: request.command, ok: true, message: "App menu inventory read",
                         result: LocalAutomationResult(state: .read, diagnostics: diagnostics), error: nil))
                 }
-            } else { reply(self.response(to: request)) }
+            case .nativeWindowScope(let encoded):
+                guard let target = self.capturedWindowTarget(encoded),
+                      let origin = try? JSONDecoder().decode(LocalAutomationOrigin.self, from: Data(encoded.utf8)) else {
+                    reply(self.response(to: request, outcome: self.failure("stale_origin", "Captured window changed"))); return
+                }
+                let liveID = target.window.id
+                self.appCommands.exportCommands(window: target.window, session: origin.nativeSessionKey) { [weak self] scope in
+                    guard let self else { return }
+                    guard let scope, request.lifetime?.isValid != false,
+                          self.capturedWindowTarget(encoded)?.window.id == liveID else {
+                        reply(self.response(to: request, outcome: self.failure("unavailable", "Native inventory unavailable; refresh Window actions"))); return
+                    }
+                    var result = LocalAutomationResult(state: .read)
+                    result.nativeScope = scope
+                    result.windowScope = self.capturedWindowScope(encoded)
+                    reply(self.response(to: request, outcome: self.success("Native commands exported", result: result)))
+                }
+            case .nativeWindowAction(let encoded, let token, let commandID):
+                guard let target = self.capturedWindowTarget(encoded),
+                      let origin = try? JSONDecoder().decode(LocalAutomationOrigin.self, from: Data(encoded.utf8)) else {
+                    reply(self.response(to: request, outcome: self.failure("stale_origin", "Captured window changed"))); return
+                }
+                self.appCommands.executeExportedCommand(window: target.window, session: origin.nativeSessionKey,
+                    token: token, commandID: commandID, lifetime: request.lifetime,
+                    validateOrigin: { [weak self] in
+                        guard let current = self?.capturedWindowTarget(encoded) else { return false }
+                        return current.window.id == target.window.id && CFEqual(current.window.element, target.window.element)
+                    }) { [weak self] error in
+                    guard let self else { return }
+                    let outcome = error.map { self.failure("not_confirmed", $0) }
+                        ?? self.success("Native command confirmed", state: .completed)
+                    reply(self.response(to: request, outcome: outcome))
+                }
+            default: reply(self.response(to: request))
+            }
         }
         do {
             try server.start()
@@ -37,8 +72,11 @@ extension AppContainer {
     }
 
     private func response(to request: LocalAutomationRequest) -> LocalAutomationResponse {
-        let outcome = performAutomationCommand(request.command, arguments: request.arguments)
-        return LocalAutomationResponse(
+        response(to: request, outcome: performAutomationCommand(request.command, arguments: request.arguments))
+    }
+
+    private func response(to request: LocalAutomationRequest, outcome: AutomationOutcome) -> LocalAutomationResponse {
+        LocalAutomationResponse(
             apiVersion: LocalAutomationProtocol.currentVersion,
             requestID: request.id,
             command: request.command,
@@ -56,8 +94,67 @@ extension AppContainer {
         arguments: [String]
     ) -> AutomationOutcome {
         switch LocalAutomationCommand(name: command, arguments: arguments) {
+        case .nativeWindowScope, .nativeWindowAction:
+            return failure("invalid_request", "Native requests require asynchronous handling")
+        case .undo:
+            guard store.readOnlyReason == nil, canUndoLastWindowAction else {
+                return failure("unavailable", "No Zonal window action can be undone")
+            }
+            undoLastWindowAction()
+            return success("Zonal undo accepted", state: .accepted)
+        case .undoIfCurrent(let expected):
+            guard store.readOnlyReason == nil, canUndoLastWindowAction,
+                  restoreEngine.recentActions.first?.id == expected else {
+                return failure("stale_undo", "The last Zonal action changed or cannot be undone; refresh before retrying")
+            }
+            undoLastWindowAction()
+            return success("Zonal undo accepted for the expected transaction", state: .accepted)
+        case .capabilities:
+            var result = LocalAutomationResult(state: .read)
+            result.capabilities = ["window-scope", "window-action", "show-window-actions", "undo", "guarded-undo", "native-window-catalog"]
+            return success("Integration capabilities read", result: result)
+        case .windowScope(let encoded):
+            guard let scoped = capturedWindowScope(encoded) else {
+                return failure("stale_origin", "The captured managed window is no longer applicable")
+            }
+            var result = LocalAutomationResult(state: .read)
+            result.windowScope = scoped
+            return success("Captured window scope resolved", result: result)
+        case .showWindowActions(let encoded):
+            guard let scoped = capturedWindowScope(encoded),
+                  let id = UUID(uuidString: scoped.assignmentID), showWindowActions(assignmentID: id) else {
+                return failure("stale_origin", "The captured window menu is unavailable")
+            }
+            return success("Scoped window menu opened", state: .completed)
+        case .windowAction(let encoded, let actionID):
+            guard let scoped = capturedWindowScope(encoded),
+                  scoped.actions.contains(where: { $0.id == actionID }),
+                  let id = UUID(uuidString: scoped.assignmentID) else {
+                return failure("stale_origin", "The captured window action is no longer applicable")
+            }
+            let action: ZoneTabAction
+            if actionID == "fit" { action = .fit }
+            else if actionID == "close" { action = .close }
+            else if actionID == "restore-custom" { action = .restoreCustom }
+            else if actionID.hasPrefix("move:") { action = .move(ZoneID(rawValue: String(actionID.dropFirst(5)))) }
+            else { return failure("unknown_action", "Unknown scoped action") }
+            guard restoreEngine.performTabAction(assignmentID: id, action: action) else {
+                return failure("unavailable", "Zonal declined the scoped operation")
+            }
+            return success("Zonal scoped operation accepted", state: .accepted)
         case .read(let kind):
-            return success("\(kind.rawValue.capitalized) read", result: automationReadResult(kind))
+            var result = automationReadResult(kind)
+            if kind == .status, store.readOnlyReason == nil, canUndoLastWindowAction,
+               let transaction = restoreEngine.recentActions.first {
+                result.undoTransaction = LocalAutomationUndoTransaction(id: transaction.id.uuidString,
+                    name: transaction.name, targets: transaction.entries.map { entry in
+                        let identity = entry.identity
+                        let liveID = identity.processIdentifier.flatMap { pid in identity.cgWindowID.map { "\(pid):cg:\($0)" } }
+                        return LocalAutomationUndoTarget(bundleID: identity.bundleIdentifier, liveWindowID: liveID,
+                            assignmentID: entry.assignmentSnapshot?.assignment?.id.uuidString, title: identity.titleHint)
+                    })
+            }
+            return success("\(kind.rawValue.capitalized) read", result: result)
         case .systemControlsStatus:
             return success("System controls status", result: LocalAutomationResult(state: .read, diagnostics: SystemControlPanels.shared.diagnostic))
         case .openSystemControl(let item):
@@ -231,6 +328,41 @@ extension AppContainer {
         }
     }
 
+    private func capturedWindowTarget(_ encoded: String) -> (context: WorkspaceContext, assignment: WindowAssignment, window: ManagedWindow)? {
+        guard let origin = try? JSONDecoder().decode(LocalAutomationOrigin.self, from: Data(encoded.utf8)),
+              origin.pid > 0, origin.windowID > 0, !origin.session.isEmpty else { return nil }
+        let context = workspaceState.currentProfileContext()
+        let matches = context.windows.filter {
+            $0.id.sortKey == origin.liveID && $0.identity.bundleIdentifier == origin.bundleID
+        }
+        guard matches.count == 1, let window = matches.first,
+              !windowController.isFullScreen(window), !windowController.isMinimized(window),
+              let assignment = workspaceState.assignment(for: window, context: context),
+              assignment.managementMode == .managed,
+              origin.profileID == context.profile.id,
+              origin.assignmentID == assignment.id.uuidString,
+              windowRegistry.bestMatch(for: assignment, in: context.windows)?.id == window.id else { return nil }
+        return (context, assignment, window)
+    }
+
+    private func capturedWindowScope(_ encoded: String) -> LocalAutomationWindowScope? {
+        guard let target = capturedWindowTarget(encoded) else { return nil }
+        let (context, assignment, window) = target
+        let actions = restoreEngine.applicableTabActions(assignmentID: assignment.id).map { action in
+            switch action {
+            case .fit: LocalAutomationScopedAction(id: "fit", title: action.title)
+            case .restoreCustom: LocalAutomationScopedAction(id: "restore-custom", title: action.title)
+            case .close: LocalAutomationScopedAction(id: "close", title: action.title)
+            case .move(let id): LocalAutomationScopedAction(id: "move:" + id.rawValue,
+                title: "Move to " + ZoneNameResolver().name(for: id, in: context.profile.zones))
+            }
+        }
+        return LocalAutomationWindowScope(profileID: context.profile.id,
+            liveWindowID: window.id.sortKey, assignmentID: assignment.id.uuidString, actions: actions,
+            appName: window.appName, windowTitle: window.title,
+            zoneName: ZoneNameResolver().name(for: assignment.zoneID, in: context.profile.zones))
+    }
+
     private func automationReadResult(_ kind: LocalAutomationReadKind) -> LocalAutomationResult {
         let health = LocalAutomationHealth(
             accessibilityTrusted: menuSnapshot.accessibilityTrusted,
@@ -289,7 +421,8 @@ extension AppContainer {
                 id: zone.id.rawValue,
                 name: ZoneNameResolver().name(for: zone.id, in: profile.zones),
                 windowCount: items.filter { $0.zoneID == zone.id }.count,
-                isSelected: zone.id == model.selectedZoneID
+                isSelected: zone.id == model.selectedZoneID,
+                frame: zone.frame
             )
         }
         let windows = items.map {

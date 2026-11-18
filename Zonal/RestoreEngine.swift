@@ -765,15 +765,33 @@ final class RestoreEngine {
         }
     }
 
-    @discardableResult
-    func performTabAction(assignmentID: UUID, action: ZoneTabAction) -> Bool {
+    private func tabActionTarget(assignmentID: UUID) -> (context: WorkspaceContext, assignment: WindowAssignment, window: ManagedWindow, frame: CGRect)? {
         let context = workspaceState.currentProfileContext()
         guard !isTabPresentationSuspended, !workspaceState.isSessionRecoveryActive,
               let assignment = context.assignments.first(where: { $0.id == assignmentID }),
               assignment.managementMode == .managed,
               let window = windowRegistry.bestMatch(for: assignment, in: context.windows),
               !windowController.isFullScreen(window), !windowController.isMinimized(window),
-              let frame = windowController.frame(of: window) else { return false }
+              let frame = windowController.frame(of: window) else { return nil }
+        return (context, assignment, window, frame)
+    }
+
+    func applicableTabActions(assignmentID: UUID) -> [ZoneTabAction] {
+        guard let target = tabActionTarget(assignmentID: assignmentID),
+              let snapshot = workspaceState.tabSnapshots().first(where: {
+                  $0.stackItems.contains { $0.assignmentID == assignmentID }
+              }) else { return [] }
+        var actions: [ZoneTabAction] = []
+        if let size = snapshot.sizeActions[assignmentID] { actions.append(size) }
+        actions += snapshot.moveDestinations.filter { $0.id != target.assignment.zoneID }.map { .move($0.id) }
+        actions.append(.close)
+        return actions
+    }
+
+    @discardableResult
+    func performTabAction(assignmentID: UUID, action: ZoneTabAction) -> Bool {
+        guard let target = tabActionTarget(assignmentID: assignmentID) else { return false }
+        let (context, assignment, window, frame) = target
         let change: ManualWindowChange?
         switch action {
         case .move(let zoneID):
