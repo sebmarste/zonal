@@ -429,6 +429,10 @@ final class AppContainer: ObservableObject {
         restoreEngine.restoreNow(trigger: .manual)
     }
 
+    func showWindowActions(assignmentID: UUID) -> Bool {
+        zoneTabs.openContextMenu(assignmentID: assignmentID)
+    }
+
     func undoLastWindowAction() {
         guard store.readOnlyReason == nil else { return }
         restoreEngine.undoLastAction()

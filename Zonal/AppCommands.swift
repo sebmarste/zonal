@@ -234,7 +234,8 @@ final class AppCommandReader: @unchecked Sendable {
         return ("", glyph == 0 ? "" : glyph == Int(kMenuCapsLockGlyph) ? "⇪" : "[key \(glyph)]")
     }
     static func glyph(_ value: Int) -> String { shortcutKey(character: "", glyph: value).display }
-    func execute(_ node: AppCommandNode) -> String? {
+    func execute(_ node: AppCommandNode, authorize: @Sendable () -> Bool = { true },
+                 permit: @Sendable () -> Bool = { true }) -> String? {
         guard contextIsCurrent() else { return "The focused window changed. Reopen the window menu." }
         let (roots, _) = read(categoriesOnly: true)
         let categories = roots.filter {
@@ -250,6 +251,7 @@ final class AppCommandReader: @unchecked Sendable {
               fresh.shortcut == node.shortcut, contextIsCurrent() else {
             return "This command changed or is unavailable. Reopen the window menu."
         }
+        guard authorize(), contextIsCurrent(), permit() else { return "Command context expired or changed. Reopen the window menu." }
         // A timeout may mean the action ran. Issue exactly one press, never retry.
         let result = press(fresh.element)
         return result == .success ? nil : "The app did not confirm execution (\(result.rawValue)). Check its state before trying again."
@@ -357,12 +359,20 @@ final class AppCommandExecution {
     weak var menuKeyWindow: NSWindow?
     var onStatus: ((String) -> Void)?
     var onFailure: ((String) -> Void)?
+    var authorize: (@MainActor @Sendable () -> Bool)?
+    var permit: @Sendable () -> Bool = { true }
     init(reader: AppCommandReader) { self.reader = reader }
     func execute(_ node: AppCommandNode) {
         let begin: @MainActor @Sendable () -> Void = { [self] in
+            let authorize = self.authorize
+            let permit = self.permit
             reader.queue.async { [self, reader] in
                 let ready = reader.waitForContext(transitionPID: ProcessInfo.processInfo.processIdentifier)
-                let error = ready ? reader.execute(node) : "The focused window changed or focus did not settle. Reopen the window menu."
+                let error = ready ? reader.execute(node, authorize: {
+                    guard let authorize else { return true }
+                    return DispatchQueue.main.sync { authorize() }
+                }, permit: permit)
+                    : "The focused window changed or focus did not settle. Reopen the window menu."
                 TabContextMenuSession.deliver { [self] in
                     onStatus?(error.map { "not-confirmed: \($0)" } ?? "confirmed")
                     if let error { onFailure?(error) }
@@ -1100,6 +1110,87 @@ final class AppCommandsController {
         self.makeReader = makeReader
         self.frontmostPID = frontmostPID
     }
+    private struct ExternalCommandScope {
+        var token: String
+        var session: String
+        var context: AppMenuContext
+        var reader: AppCommandReader
+        var nodes: [AppCommandNode]
+        var createdAt: Double
+        var permission: LocalAutomationRequestLifetime
+    }
+    private var externalScopes: [ExternalCommandScope] = []
+
+    func exportCommands(window: ManagedWindow, session: String,
+                        completion: @escaping @MainActor @Sendable (LocalAutomationNativeScope?) -> Void) {
+        var targetPID: pid_t = 0
+        AXUIElementGetPid(window.element, &targetPID)
+        let reader = makeReader(targetPID, window.element)
+        let context = AppMenuContext(pid: targetPID, window: window.element,
+            launchDate: NSRunningApplication(processIdentifier: targetPID)?.launchDate)
+        let finish: @MainActor @Sendable (AppMenuInventory) -> Void = { [weak self] inventory in
+            guard let self, inventory.isCurrent else { completion(nil); return }
+            let nodes = inventory.nodes.flatMap { [$0] + $0.descendants }.filter {
+                !$0.isMenu && !$0.title.isEmpty && !$0.isAppleMenu
+            }
+            externalScopes.removeAll {
+                if !$0.permission.isValid { $0.permission.cancel(); return true }
+                return false
+            }
+            let token = UUID().uuidString
+            externalScopes.removeAll {
+                if $0.session == session && $0.context == context { $0.permission.cancel(); return true }
+                return false
+            }
+            externalScopes.append(.init(token: token, session: session, context: context,
+                reader: reader, nodes: Array(nodes.prefix(4000)), createdAt: ProcessInfo.processInfo.systemUptime,
+                permission: LocalAutomationRequestLifetime(deadline: ProcessInfo.processInfo.systemUptime + 300)))
+            while externalScopes.count > 8 { externalScopes.removeFirst().permission.cancel() }
+            completion(LocalAutomationNativeScope(token: token, commands: nodes.prefix(4000).map {
+                LocalAutomationNativeCommand(id: $0.path.indices.map(String.init).joined(separator: "."),
+                    title: $0.title, path: $0.path.titles, enabled: $0.enabled, shortcut: $0.shortcut)
+            }, complete: inventory.complete))
+        }
+        if let cached = menuCache.snapshot(for: context) {
+            reader.queue.async { [weak self] in
+                let refreshed = reader.refreshEnabled(cached)
+                TabContextMenuSession.deliver {
+                    guard let self else { completion(nil); return }
+                    if let refreshed, refreshed.complete, refreshed.isCurrent { finish(refreshed) }
+                    else { self.menuCache.load(context, reader: reader, completion: finish) }
+                }
+            }
+        } else { menuCache.load(context, reader: reader, completion: finish) }
+    }
+
+    func executeExportedCommand(window: ManagedWindow, session: String, token: String, commandID: String,
+                                lifetime: LocalAutomationRequestLifetime? = nil,
+                                validateOrigin: @escaping @MainActor @Sendable () -> Bool = { true },
+                                completion: @escaping @MainActor @Sendable (String?) -> Void) {
+        var targetPID: pid_t = 0
+        AXUIElementGetPid(window.element, &targetPID)
+        guard let scope = externalScopes.first(where: { $0.token == token && $0.session == session }),
+              scope.context.pid == targetPID,
+              scope.context.launchDate == NSRunningApplication(processIdentifier: targetPID)?.launchDate,
+              ProcessInfo.processInfo.systemUptime - scope.createdAt <= 300,
+              CFEqual(scope.context.window, window.element),
+              let node = scope.nodes.first(where: { $0.path.indices.map(String.init).joined(separator: ".") == commandID }),
+              node.enabled else { completion("Native command scope changed or expired; reopen Window actions"); return }
+        let execution = AppCommandExecution(reader: scope.reader)
+        execution.permit = { lifetime?.isValid != false && scope.permission.isValid }
+        execution.authorize = { [weak self] in
+            guard let self, lifetime?.isValid != false, validateOrigin(),
+                  let current = self.externalScopes.first(where: { $0.token == token && $0.session == session }),
+                  ProcessInfo.processInfo.systemUptime - current.createdAt <= 300,
+                  current.context.pid == targetPID,
+                  current.context.launchDate == NSRunningApplication(processIdentifier: targetPID)?.launchDate,
+                  CFEqual(current.context.window, window.element) else { return false }
+            return lifetime?.isValid != false
+        }
+        execution.onStatus = { completion($0 == "confirmed" ? nil : $0) }
+        execution.execute(node)
+    }
+
     private(set) var isVisible = false
     private(set) var lastInventory = "App menus have not been opened"
     var isCapturingInput: Bool { isVisible || session?.isPreparing == true }

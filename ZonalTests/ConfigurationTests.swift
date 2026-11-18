@@ -198,6 +198,19 @@ final class ConfigurationTests: XCTestCase {
         }
     }
 
+    func testExternalScopeProtocolPreservesExactWindowIdentity() throws {
+        let encoded = #"{"pid":42,"windowID":987,"bundleID":"test.app","session":"session-1"}"#
+        let origin = try JSONDecoder().decode(LocalAutomationOrigin.self, from: Data(encoded.utf8))
+        XCTAssertEqual(origin.liveID, "42:cg:987")
+        XCTAssertEqual(LocalAutomationCommand(name: "undo", arguments: []), .undo)
+        XCTAssertEqual(LocalAutomationCommand(name: "undo", arguments: ["extra"]), .invalid("undo takes no arguments"))
+        XCTAssertEqual(LocalAutomationCommand(name: "window-scope", arguments: [encoded]), .windowScope(encoded))
+        XCTAssertEqual(LocalAutomationCommand(name: "window-action", arguments: [encoded, "fit"]), .windowAction(encoded, "fit"))
+        XCTAssertEqual(LocalAutomationCommand(name: "show-window-actions", arguments: [encoded]), .showWindowActions(encoded))
+        XCTAssertEqual(LocalAutomationCommand(name: "window-action", arguments: ["fit"]), .invalid("Captured origin and action required"))
+        XCTAssertThrowsError(try JSONDecoder().decode(LocalAutomationOrigin.self, from: Data(#"{"pid":42,"bundleID":"test.app","session":"s"}"#.utf8)))
+    }
+
     func testAutomationCommandParsingIsDeterministic() {
         XCTAssertEqual(LocalAutomationCommand(name: "app-menus", arguments: []), .appMenus)
         let assignmentID = UUID()
@@ -731,6 +744,7 @@ private final class CommandMenuFixture {
     var outcome: AXError = .success
     var onPress: (() -> Void)?
     var onAttribute: (() -> Void)?
+    var onFocusedWindowRead: (() -> Void)?
     var onMenuRead: (() -> Void)?
     lazy var reader = makeReader()
     func makeReader() -> AppCommandReader {
@@ -741,7 +755,10 @@ private final class CommandMenuFixture {
             let pid = self.focusedPIDs.isEmpty ? (self.current ? self.pid : 910099) : self.focusedPIDs.removeFirst()
             return AXUIElementCreateApplication(pid)
         }
-        if name == kAXFocusedWindowAttribute { return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098) }
+        if name == kAXFocusedWindowAttribute {
+            self.onFocusedWindowRead?()
+            return self.windowCurrent ? self.window : AXUIElementCreateApplication(910098)
+        }
         if name == kAXMenuBarAttribute { self.onMenuRead?(); Thread.sleep(forTimeInterval: self.menuReadDelay); return self.bar }
         if name == kAXChildrenAttribute {
             if CFEqual(element, self.bar) { return [self.file] as CFArray }
@@ -2033,5 +2050,131 @@ extension ConfigurationTests {
         XCTAssertFalse(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
         after.profiles[0].tabAppearance = nil
         XCTAssertTrue(ConfigurationRuntimePolicy().requiresWorkspaceReconciliation(previous: before, current: after))
+    }
+}
+
+
+extension ConfigurationTests {
+    @MainActor
+    func testExternalNativeInventoryAndExecutionReuseGuardedReader() async throws {
+        let fixture = CommandMenuFixture()
+        let reader = fixture.reader
+        let controller = AppCommandsController(makeReader: { _, _ in reader })
+        let window = ManagedWindow(id: .quartz(processIdentifier: fixture.pid, windowNumber: 7),
+            identity: WindowIdentity(bundleIdentifier: "test.app", processIdentifier: fixture.pid,
+                cgWindowID: 7, axRole: nil, axSubrole: nil, observedOrder: 0),
+            appName: "Test", title: "Document", icon: nil, element: fixture.window)
+        let loaded = expectation(description: "Export inventory without a panel")
+        var exported: LocalAutomationNativeScope?
+        controller.exportCommands(window: window, session: "session") { exported = $0; loaded.fulfill() }
+        await fulfillment(of: [loaded], timeout: 3)
+        let scope = try XCTUnwrap(exported)
+        XCTAssertEqual(scope.commands.count, 2)
+        XCTAssertNotEqual(scope.commands[0].id, scope.commands[1].id, "Duplicate titles retain distinct path IDs")
+        XCTAssertEqual(scope.commands[0].path, ["File", "Duplicate"])
+        XCTAssertTrue(fixture.presses.isEmpty)
+        XCTAssertFalse(controller.isCapturingInput, "Export never opens a panel or steals keyboard capture")
+        controller.executeExportedCommand(window: window, session: "different", token: scope.token,
+            commandID: scope.commands[0].id) { XCTAssertNotNil($0) }
+        XCTAssertTrue(fixture.presses.isEmpty)
+        let executed = expectation(description: "Existing execution pipeline confirms fake press")
+        controller.executeExportedCommand(window: window, session: "session", token: scope.token,
+            commandID: scope.commands[0].id) { XCTAssertNil($0); executed.fulfill() }
+        await fulfillment(of: [executed], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1)
+        fixture.replacement = AXUIElementCreateApplication(910777)
+        let rejected = expectation(description: "Existing reader refuses replaced AX command")
+        controller.executeExportedCommand(window: window, session: "session", token: scope.token,
+            commandID: scope.commands[1].id) { XCTAssertNotNil($0); rejected.fulfill() }
+        await fulfillment(of: [rejected], timeout: 3)
+        XCTAssertEqual(fixture.presses.count, 1, "Stale native command must never press a replacement")
+    }
+
+    @MainActor
+    func testNativeReexportRevokesPreviousCatalogAndQueuedOrigin() async throws {
+        let fixture = CommandMenuFixture()
+        let reader = fixture.reader
+        let controller = AppCommandsController(makeReader: { _, _ in reader })
+        let window = ManagedWindow(id: .quartz(processIdentifier: fixture.pid, windowNumber: 7),
+            identity: WindowIdentity(bundleIdentifier: "test.app", processIdentifier: fixture.pid,
+                cgWindowID: 7, axRole: nil, axSubrole: nil, observedOrder: 0),
+            appName: "Test", title: "Document", icon: nil, element: fixture.window)
+        var first: LocalAutomationNativeScope?
+        let loaded = expectation(description: "First immutable inventory")
+        controller.exportCommands(window: window, session: "session") { first = $0; loaded.fulfill() }
+        await fulfillment(of: [loaded], timeout: 3)
+        let old = try XCTUnwrap(first)
+        fixture.replacement = AXUIElementCreateApplication(910777)
+        var next: LocalAutomationNativeScope?
+        let refreshed = expectation(description: "Changed catalog gets fresh lease")
+        controller.exportCommands(window: window, session: "session") { next = $0; refreshed.fulfill() }
+        await fulfillment(of: [refreshed], timeout: 3)
+        let current = try XCTUnwrap(next)
+        XCTAssertNotEqual(old.token, current.token)
+        controller.executeExportedCommand(window: window, session: "session", token: old.token,
+            commandID: old.commands[1].id) { XCTAssertNotNil($0) }
+        XCTAssertTrue(fixture.presses.isEmpty)
+        let gate = DispatchSemaphore(value: 0)
+        reader.queue.async { gate.wait() }
+        var originCurrent = true
+        let refused = expectation(description: "Queued operation rechecks origin before press")
+        controller.executeExportedCommand(window: window, session: "session", token: current.token,
+            commandID: current.commands[0].id, validateOrigin: { originCurrent }) {
+                XCTAssertNotNil($0); refused.fulfill()
+            }
+        originCurrent = false
+        gate.signal()
+        await fulfillment(of: [refused], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+        let lifetime = LocalAutomationRequestLifetime(deadline: ProcessInfo.processInfo.systemUptime + 5)
+        let cancelGate = DispatchSemaphore(value: 0)
+        reader.queue.async { cancelGate.wait() }
+        let cancelled = expectation(description: "Disconnected operation cannot press later")
+        controller.executeExportedCommand(window: window, session: "session", token: current.token,
+            commandID: current.commands[0].id, lifetime: lifetime) { XCTAssertNotNil($0); cancelled.fulfill() }
+        lifetime.cancel(); cancelGate.signal()
+        await fulfillment(of: [cancelled], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+        let duringValidation = LocalAutomationRequestLifetime(deadline: ProcessInfo.processInfo.systemUptime + 5)
+        let validationCancelled = expectation(description: "Cancellation during scope validation wins")
+        controller.executeExportedCommand(window: window, session: "session", token: current.token,
+            commandID: current.commands[0].id, lifetime: duringValidation,
+            validateOrigin: { duringValidation.cancel(); return true }) {
+                XCTAssertNotNil($0); validationCancelled.fulfill()
+            }
+        await fulfillment(of: [validationCancelled], timeout: 3)
+        XCTAssertTrue(fixture.presses.isEmpty)
+    }
+
+    func testNativeCatalogProtocolRequiresCompleteArguments() {
+        let transaction = UUID()
+        XCTAssertEqual(LocalAutomationCommand(name: "undo-if-current", arguments: [transaction.uuidString]), .undoIfCurrent(transaction))
+        XCTAssertEqual(LocalAutomationCommand(name: "undo-if-current", arguments: ["invalid"]), .invalid("Valid undo transaction required"))
+        XCTAssertEqual(LocalAutomationCommand(name: "native-window-scope", arguments: ["origin"]), .nativeWindowScope("origin"))
+        XCTAssertEqual(LocalAutomationCommand(name: "native-window-action", arguments: ["origin", "token", "path"]),
+            .nativeWindowAction("origin", "token", "path"))
+        XCTAssertEqual(LocalAutomationCommand(name: "native-window-action", arguments: ["origin"]),
+            .invalid("Origin, token and command required"))
+    }
+
+    func testNativeCancellationDuringFinalFocusReadPreventsPress() throws {
+        let fixture = CommandMenuFixture()
+        let reader = fixture.reader
+        let roots = reader.read().0
+        let node = try XCTUnwrap(roots.first?.descendants.first)
+        var reads = 0
+        fixture.onFocusedWindowRead = { reads += 1 }
+        XCTAssertNil(reader.execute(node))
+        let finalRead = reads
+        XCTAssertGreaterThan(finalRead, 0)
+        fixture.presses.removeAll()
+        reads = 0
+        let lifetime = LocalAutomationRequestLifetime(deadline: ProcessInfo.processInfo.systemUptime + 10)
+        fixture.onFocusedWindowRead = {
+            reads += 1
+            if reads == finalRead { lifetime.cancel() }
+        }
+        XCTAssertNotNil(reader.execute(node, permit: { lifetime.isValid }))
+        XCTAssertTrue(fixture.presses.isEmpty, "Cancellation during the final AX read must win before AXPress")
     }
 }

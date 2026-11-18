@@ -816,4 +816,27 @@ final class WindowReliabilityTests: XCTestCase {
         }.value
         XCTAssertEqual(response.message, "ready")
     }
+
+    @MainActor
+    func testAutomationShutdownRevokesPendingRequestLifetime() async throws {
+        let socket = try directory().appendingPathComponent("lifetime.sock")
+        let received = expectation(description: "Pending operation carries cancellation")
+        var lifetime: LocalAutomationRequestLifetime?
+        let server = LocalAutomationSocketServer(socketURL: socket) { request, _ in
+            lifetime = request.lifetime; received.fulfill()
+        }
+        try server.start()
+        let client = Task.detached {
+            try LocalAutomationSocketClient(socketURL: socket).send(
+                LocalAutomationRequest(apiVersion: 2, id: "pending", command: "health", arguments: []))
+        }
+        await fulfillment(of: [received], timeout: 2)
+        XCTAssertTrue(try XCTUnwrap(lifetime).isValid)
+        server.stop()
+        XCTAssertFalse(try XCTUnwrap(lifetime).isValid)
+        switch await client.result {
+        case .success: XCTFail("Shutdown must disconnect an uncompleted operation")
+        case .failure: break
+        }
+    }
 }

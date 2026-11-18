@@ -255,6 +255,19 @@ final class ZoneTabController: NSObject {
         super.init()
     }
 
+    func openContextMenu(assignmentID: UUID) -> Bool {
+        func buttons(_ view: NSView) -> [ZoneTabNativeButton] {
+            if let button = view as? ZoneTabNativeButton { return [button] }
+            return view.subviews.flatMap(buttons)
+        }
+        refresh()
+        let matches = presentations.values.flatMap { buttons($0.host) }.filter { $0.assignmentID == assignmentID }
+        guard matches.count == 1, let button = matches.first, let window = button.window else { return false }
+        button.showContextMenu(at: window.convertPoint(toScreen: button.convert(
+            CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)))
+        return true
+    }
+
     func openFocusedContextMenu() -> Bool {
         func buttons(_ view: NSView) -> [ZoneTabNativeButton] {
             if let button = view as? ZoneTabNativeButton { return [button] }
