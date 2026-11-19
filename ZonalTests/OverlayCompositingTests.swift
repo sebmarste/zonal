@@ -15,6 +15,16 @@ final class OverlayCompositingTests: XCTestCase {
         store.bootstrap()
         var config = store.loadConfiguration()
         config.setupVersion = 1
+        let profileManager = ProfileManager(store: store)
+        let frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let builtIn = DisplaySnapshot.Display(id: 1, frame: frame, visibleFrame: frame, scale: 2,
+                                              name: "Built-in", isBuiltIn: true)
+        let external = DisplaySnapshot.Display(id: 2, frame: frame, visibleFrame: frame, scale: 1,
+                                                name: "External Display")
+        config.profiles[0].setupBindings = [builtIn, external].map {
+            profileManager.setupBinding(for: DisplaySnapshot(displays: [$0]))
+        }
+        config.profiles[0].displayRoles = profileManager.roles(for: DisplaySnapshot(displays: [builtIn]))
         config.windowDefaultZoneRules = [WindowDefaultZoneRule(bundleIdentifier: "com.apple.finder", zoneID: config.profiles[0].mainZoneID)]
         config.excludedBundleIdentifiers = ["com.apple.Safari"]
         XCTAssertTrue(store.saveConfiguration(config))

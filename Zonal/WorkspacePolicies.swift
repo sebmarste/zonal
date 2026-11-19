@@ -695,6 +695,27 @@ struct ZonePeekStackLayoutPolicy {
 }
 
 struct ConfigurationEditor {
+    func removeDisplaySetup(_ setupID: UUID, from profileID: String, in configuration: inout ZonalConfiguration) -> Bool {
+        guard let profileIndex = configuration.profiles.firstIndex(where: { $0.id == profileID }),
+              let setupIndex = configuration.profiles[profileIndex].setupBindings.firstIndex(where: { $0.id == setupID })
+        else { return false }
+
+        var profile = configuration.profiles[profileIndex]
+        let removed = profile.setupBindings.remove(at: setupIndex)
+        // A capture sets the layout's display roles. Reuse the role ID when the sole remaining screen replaces it.
+        if removed.displays.count == 1,
+           profile.setupBindings.count == 1,
+           let remaining = profile.setupBindings.first, remaining.displays.count == 1,
+           profile.displayRoles.count == 1,
+           profile.displayRoles[0].descriptor.persistentID == removed.displays[0].persistentID {
+            let display = remaining.displays[0]
+            profile.displayRoles[0].descriptor = display
+            profile.displayRoles[0].name = display.name
+        }
+        configuration.profiles[profileIndex] = profile
+        return true
+    }
+
     func sanitized(_ input: ZonalConfiguration) -> ZonalConfiguration {
         var configuration = input.profiles.isEmpty ? .default : input
         ensureEveryProfileContainsEveryZone(&configuration)

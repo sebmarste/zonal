@@ -200,10 +200,6 @@ extension SettingsView {
         "\(hotkey.modifiers.displayString) + \(hotkey.keyLabel)"
     }
 
-    func displayBindingSummary(_ profile: DisplayProfile) -> String {
-        profile.setupBindings.isEmpty ? "No captured display setup" : profile.setupBindings.map(\.name).joined(separator: ", ")
-    }
-
     func reload() {
         // Reopening Settings must retain edits when an earlier write failed.
         guard configurationSaveError == nil else { return }
@@ -405,6 +401,10 @@ extension SettingsView {
             deleteZone(id)
         case .profile(let id, _):
             deleteProfile(id)
+        case .displaySetup(let profileID, _, let setupID, _):
+            if ConfigurationEditor().removeDisplaySetup(setupID, from: profileID, in: &configuration) {
+                persist()
+            }
         }
         pendingDeletion = nil
     }
