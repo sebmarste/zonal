@@ -137,7 +137,7 @@ struct SettingsView: View {
             Alert(
                 title: Text(deletion.title),
                 message: Text(deletion.message),
-                primaryButton: .destructive(Text("Delete")) {
+                primaryButton: .destructive(Text(deletion.buttonTitle)) {
                     confirmDeletion(deletion)
                 },
                 secondaryButton: .cancel()

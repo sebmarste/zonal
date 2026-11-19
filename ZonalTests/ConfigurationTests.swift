@@ -601,6 +601,50 @@ final class ConfigurationTests: XCTestCase {
         XCTAssertTrue(manager.matchingProfiles(for: DisplaySnapshot(displays: [])).isEmpty)
     }
 
+    func testRemovingDisplaySetupKeepsTheOtherSetupAndProfilesUsable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ZonalTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(supportDirectory: directory)
+        store.bootstrap()
+        let manager = ProfileManager(store: store)
+        let retained = DisplaySnapshot(displays: [.init(id: 1,
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 24, width: 1512, height: 958), scale: 2,
+            persistentID: "built-in", name: "Built-in", isBuiltIn: true)])
+        let removed = DisplaySnapshot(displays: [.init(id: 2,
+            frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+            visibleFrame: CGRect(x: 0, y: 24, width: 1920, height: 1056), scale: 1,
+            persistentID: "external", name: "External")])
+        let retainedSetup = manager.setupBinding(for: retained, name: "Only")
+        let removedSetup = manager.setupBinding(for: removed, name: "Only")
+        var configuration = store.loadConfiguration()
+        var edited = configuration.profiles[0]
+        edited.setupBindings = [retainedSetup, removedSetup]
+        edited.displayRoles = manager.roles(for: removed)
+        edited.zones[0].displayRoleID = .workspace
+        var other = edited
+        other.id = "other"
+        other.setupBindings = [removedSetup]
+        configuration.profiles = [edited, other]
+
+        let editor = ConfigurationEditor()
+        XCTAssertTrue(editor.removeDisplaySetup(removedSetup.id, from: edited.id, in: &configuration))
+        XCTAssertFalse(editor.removeDisplaySetup(removedSetup.id, from: edited.id, in: &configuration))
+        XCTAssertTrue(store.saveConfiguration(configuration))
+        let saved = store.loadConfiguration(forceReload: true)
+        XCTAssertEqual(saved.profiles[0].setupBindings, [retainedSetup])
+        XCTAssertEqual(saved.profiles[0].zones, edited.zones)
+        XCTAssertEqual(saved.profiles[1], other)
+        XCTAssertEqual(manager.matchingProfiles(for: retained).map(\.id), [edited.id])
+        XCTAssertEqual(manager.matchingProfiles(for: removed).map(\.id), [other.id])
+        XCTAssertEqual(manager.display(for: .workspace, profile: saved.profiles[0], snapshot: retained)?.id, 1)
+
+        XCTAssertTrue(editor.removeDisplaySetup(retainedSetup.id, from: edited.id, in: &configuration))
+        XCTAssertTrue(store.saveConfiguration(configuration))
+        XCTAssertEqual(store.loadProfiles(forceReload: true).map(\.id), [edited.id, other.id])
+        XCTAssertTrue(manager.matchingProfiles(for: retained).isEmpty)
+    }
+
     @MainActor
     func testStatusMenuListsMatchingProfilesWithCheckedSelectionAndStableIDs() throws {
         var snapshot = StatusMenuSnapshot(accessibilityTrusted: true, inputMonitoringGranted: true,

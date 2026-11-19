@@ -54,13 +54,17 @@ extension SettingsView {
                             isSelected: profile.id == selectedProfileID,
                             isMatched: profile.id == matchedProfileID,
                             isLastApplied: profile.id == configuration.activeProfileID,
-                            displayBindingSummary: displayBindingSummary(profile),
+                            displaySetups: profile.setupBindings,
                             canDelete: configuration.profiles.count > 1,
                             selectAction: { selectedProfileID = profile.id },
                             moveBefore: { movingProfileID in moveProfile(movingProfileID, before: profile.id) },
                             draggedProfileID: $draggedProfileID,
                             bindDisplaysAction: {
                                 beginDisplayCapture(profileID: profile.id)
+                            },
+                            removeSetupAction: { setup in
+                                pendingDeletion = .displaySetup(profileID: profile.id, profileName: profile.name,
+                                                                setupID: setup.id, setupName: setup.name)
                             },
                             activateAction: { beginProfileApply(profile.id) },
                             deleteAction: {

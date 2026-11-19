@@ -13,11 +13,13 @@ struct DisplayCaptureDraft: Identifiable {
 enum SettingsDeletion: Identifiable {
     case zone(id: ZoneID, name: String)
     case profile(id: String, name: String)
+    case displaySetup(profileID: String, profileName: String, setupID: UUID, setupName: String)
 
     var id: String {
         switch self {
         case .zone(let id, _): "zone-\(id.rawValue)"
         case .profile(let id, _): "profile-\(id)"
+        case .displaySetup(let profileID, _, let setupID, _): "setup-\(profileID)-\(setupID)"
         }
     }
 
@@ -25,6 +27,7 @@ enum SettingsDeletion: Identifiable {
         switch self {
         case .zone(_, let name): "Delete \(name)?"
         case .profile(_, let name): "Delete \(name)?"
+        case .displaySetup(_, _, _, let name): "Remove \(name)?"
         }
     }
 
@@ -34,7 +37,14 @@ enum SettingsDeletion: Identifiable {
             "This removes the zone from every display profile and removes its shortcuts. Windows will fall back to the main zone."
         case .profile:
             "This removes the display profile and its saved window placements. This cannot be undone."
+        case .displaySetup(_, let profileName, _, _):
+            "This removes the display setup assignment from \(profileName)."
         }
+    }
+
+    var buttonTitle: String {
+        if case .displaySetup = self { return "Remove" }
+        return "Delete"
     }
 }
 
@@ -405,12 +415,13 @@ struct ProfileListRow: View {
     var isSelected: Bool
     var isMatched: Bool
     var isLastApplied: Bool
-    var displayBindingSummary: String
+    var displaySetups: [DisplaySetupBinding]
     var canDelete: Bool
     var selectAction: () -> Void
     var moveBefore: (String) -> Void
     @Binding var draggedProfileID: String?
     var bindDisplaysAction: () -> Void
+    var removeSetupAction: (DisplaySetupBinding) -> Void
     var activateAction: () -> Void
     var deleteAction: () -> Void
 
@@ -423,9 +434,26 @@ struct ProfileListRow: View {
                 TextField("Profile", text: $name)
                     .textFieldStyle(.plain)
                     .font(.body.weight(.semibold))
-                Text(displayBindingSummary)
+                if displaySetups.isEmpty {
+                    Text("No captured display setup")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(displaySetups) { setup in
+                    HStack(spacing: 4) {
+                        Text(setup.name)
+                            .foregroundStyle(.secondary)
+                        Button(role: .destructive, action: { removeSetupAction(setup) }) {
+                            Label("Remove \(setup.name) from \(name)", systemImage: "trash")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 22, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Remove \(setup.name) from \(name)")
+                    }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -448,9 +476,11 @@ struct ProfileListRow: View {
             Button("Apply now", action: activateAction)
                 .buttonStyle(.link)
             Button(role: .destructive, action: deleteAction) {
-                Image(systemName: "trash")
+                Label("Delete profile \(name)", systemImage: "trash")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .help("Delete profile \(name)")
             .disabled(!canDelete)
         }
         .padding(10)
